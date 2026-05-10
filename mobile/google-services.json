@@ -14,6 +14,14 @@
       },
       "oauth_client": [
         {
+          "client_id": "6773414897-63kmd1m127al19iiq16dv3ioch2d3erh.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.RISacc.gameontest",
+            "certificate_hash": "8c9c8ef5cf469616bd673813873d8530d25ba7f8"
+          }
+        },
+        {
           "client_id": "6773414897-r3rfgkts0lhk2fq9u9ltd8vsuofgrhir.apps.googleusercontent.com",
           "client_type": 3
         }

@@ -7,15 +7,16 @@ import { auth } from '../config/firebase';
 
 WebBrowser.maybeCompleteAuthSession();
 
+const WEB_CLIENT_ID = '6773414897-r3rfgkts0lhk2fq9u9ltd8vsuofgrhir.apps.googleusercontent.com';
+
 export default function LoginScreen() {
   const [loading, setLoading] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
 
   const [request, response, promptAsync] = Google.useAuthRequest({
-    androidClientId: '6773414897-r3rfgkts0lhk2fq9u9ltd8vsuofgrhir.apps.googleusercontent.com',
-    iosClientId: '6773414897-r3rfgkts0lhk2fq9u9ltd8vsuofgrhir.apps.googleusercontent.com',
-    webClientId: '6773414897-r3rfgkts0lhk2fq9u9ltd8vsuofgrhir.apps.googleusercontent.com',
-  });
+    webClientId: WEB_CLIENT_ID,
+    scopes: ['profile', 'email'],
+  }, { useProxy: true });
 
   React.useEffect(() => {
     if (response?.type === 'success') {
@@ -38,7 +39,7 @@ export default function LoginScreen() {
       ) : (
         <TouchableOpacity
           style={styles.button}
-          onPress={() => promptAsync()}
+          onPress={() => promptAsync({ useProxy: true })}
           disabled={!request}
         >
           <Text style={styles.buttonText}>Prijava z Googlom</Text>
