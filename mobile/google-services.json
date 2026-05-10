@@ -1,0 +1,39 @@
+{
+  "project_info": {
+    "project_number": "6773414897",
+    "project_id": "gameontest-2fab8",
+    "storage_bucket": "gameontest-2fab8.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:6773414897:android:941380bd0f0f34f59a8250",
+        "android_client_info": {
+          "package_name": "com.RISacc.gameontest"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "6773414897-r3rfgkts0lhk2fq9u9ltd8vsuofgrhir.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyC2MbaSUBUkOEJ-WjyCckT6SjHIMuQHzvo"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "6773414897-r3rfgkts0lhk2fq9u9ltd8vsuofgrhir.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
