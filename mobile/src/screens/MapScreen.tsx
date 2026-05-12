@@ -45,23 +45,22 @@ export default function MapScreen() {
 
       <View style={styles.searchContainer}>
         <Ionicons name="search-outline" size={16} color="#555" style={{ marginHorizontal: 4 }} />
-        <TextInput style={styles.searchInput} placeholder="Išči lokacijo..." placeholderTextColor="#555" value={search} onChangeText={setSearch} autoFocus={false} showSoftInputOnFocus={false} />
+        <TextInput style={styles.searchInput} placeholder="Išči lokacijo..." placeholderTextColor="#555" value={search} onChangeText={setSearch} />
         <Ionicons name="locate-outline" size={16} color="#555" style={{ marginHorizontal: 4 }} />
       </View>
 
       <View style={styles.mapContainer}>
-        <MapView
-          style={styles.map}
-          customMapStyle={darkMapStyle}
-          initialRegion={{
-            latitude: 46.5547,
-            longitude: 15.6459,
-            latitudeDelta: 0.05,
-            longitudeDelta: 0.05,
-          }}
-        >
+        <MapView style={styles.map} customMapStyle={darkMapStyle} toolbarEnabled={false} zoomControlEnabled={false} initialRegion={{ latitude: 46.5547, longitude: 15.6459, latitudeDelta: 0.05, longitudeDelta: 0.05 }}>
+
+          <Marker coordinate={{ latitude: 46.5547, longitude: 15.6459 }} onPress={() => setSelected(TEST_MATCH)}>
+            <View style={styles.markerContainer}>
+              <Ionicons name="football-outline" size={18} color="#fff" />
+              <Text style={styles.markerCount}>3/10</Text>
+            </View>
+          </Marker>
+
           {matches.map(m => (
-            <Marker key={m.id} coordinate={{ latitude: m.location.lat, longitude: m.location.lng }} onPress={() => setSelected(m)} >
+            <Marker key={m.id} coordinate={{ latitude: m.location.lat, longitude: m.location.lng }} onPress={() => setSelected(m)}>
               <View style={[styles.markerContainer, selected?.id === m.id && styles.markerSelected]}>
                 <SportIcon sport={m.sport} size={18} color={selected?.id === m.id ? '#f5c518' : '#fff'} />
                 <Text style={styles.markerCount}>{m.filledSpots}/{m.totalSpots}</Text>
