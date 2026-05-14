@@ -24,6 +24,7 @@ export const styles = StyleSheet.create({
 
   mapContainer: { flex: 1, position: 'relative' },
   map: { flex: 1 },
+  mapOverlay: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(10, 14, 26, 0.45)' },
   locationBtn: {
     position: 'absolute', right: 16, bottom: 16,
     backgroundColor: '#131929', borderRadius: 20,
