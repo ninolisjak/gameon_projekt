@@ -1,81 +1,118 @@
 import { StyleSheet } from 'react-native';
-
-export const darkMapStyle = [
-  { elementType: 'geometry', stylers: [{ color: '#0a0e1a' }] },
-  { elementType: 'labels.text.fill', stylers: [{ color: '#4a5568' }] },
-  { elementType: 'labels.text.stroke', stylers: [{ color: '#0a0e1a' }] },
-  { featureType: 'road', elementType: 'geometry', stylers: [{ color: '#1a2035' }] },
-  { featureType: 'road.arterial', elementType: 'geometry', stylers: [{ color: '#1e2a45' }] },
-  { featureType: 'road.highway', elementType: 'geometry', stylers: [{ color: '#243450' }] },
-  { featureType: 'water', elementType: 'geometry', stylers: [{ color: '#0d1526' }] },
-  { featureType: 'poi', stylers: [{ visibility: 'off' }] },
-  { featureType: 'transit', stylers: [{ visibility: 'off' }] },
-];
+import { colors } from './theme';
 
 export const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#0a0e1a' },
+  container: { flex: 1, backgroundColor: colors.bg },
 
-    searchContainer: {
+  // Map fills the entire screen
+  map: { ...StyleSheet.absoluteFillObject },
+
+  // Navbar floats on top — map shows through the rounded corners
+  bannerWrap: {
+    position: 'absolute', top: 0, left: 0, right: 0,
+    zIndex: 10,
+  },
+  banner: {
+    backgroundColor: colors.primary,
+    paddingHorizontal: 18,
+    paddingTop: 10,
+    paddingBottom: 18,
+    borderBottomLeftRadius: 28,
+    borderBottomRightRadius: 28,
+    shadowColor: '#000',
+    shadowOpacity: 0.3,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 10,
+  },
+  bannerTopRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  brand: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  brandLogoBox: {
+    width: 38, height: 38, borderRadius: 11,
+    backgroundColor: 'rgba(255,255,255,0.18)',
+    alignItems: 'center', justifyContent: 'center',
+  },
+  brandText: { color: '#fff', fontWeight: '900', fontSize: 22, letterSpacing: -0.3 },
+  bannerRightRow: { flexDirection: 'row', gap: 10 },
+  bannerIconBtn: {
+    width: 40, height: 40, borderRadius: 20,
+    backgroundColor: 'rgba(255,255,255,0.18)',
+    alignItems: 'center', justifyContent: 'center',
+  },
+  searchPill: {
     flexDirection: 'row', alignItems: 'center',
-    backgroundColor: '#131929', marginHorizontal: 16, marginVertical: 8,
-    borderRadius: 12, paddingHorizontal: 12, paddingVertical: 8,
+    backgroundColor: 'rgba(255,255,255,0.22)',
+    borderRadius: 14, paddingHorizontal: 14, paddingVertical: 10,
+    marginTop: 12, gap: 8,
+    borderWidth: 1, borderColor: 'rgba(255,255,255,0.18)',
   },
-  searchInput: { flex: 1, color: '#fff', fontSize: 14, paddingHorizontal: 8 },
+  searchInput: { flex: 1, color: '#fff', fontSize: 14, fontWeight: '500', padding: 0 },
 
-  mapContainer: { flex: 1, position: 'relative' },
-  map: { flex: 1 },
-  mapOverlay: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(10, 14, 26, 0.45)' },
+  // Locate button — floats over map
   locationBtn: {
-    position: 'absolute', right: 16, bottom: 16,
-    backgroundColor: '#131929', borderRadius: 20,
-    width: 40, height: 40, alignItems: 'center', justifyContent: 'center',
-    elevation: 4,
+    position: 'absolute', right: 16, bottom: 100,
+    backgroundColor: colors.bgElevated, borderRadius: 22,
+    width: 44, height: 44, alignItems: 'center', justifyContent: 'center',
+    borderWidth: 1, borderColor: colors.borderSubtle,
+    elevation: 4, shadowColor: '#000', shadowOpacity: 0.3, shadowRadius: 8, shadowOffset: { width: 0, height: 2 },
+    zIndex: 5,
   },
 
-  markerContainer: {
-    backgroundColor: '#131929', borderRadius: 20, borderWidth: 2,
-    borderColor: '#2a3550', padding: 6, alignItems: 'center', minWidth: 52,
-  },
-  markerSelected: { borderColor: '#f5c518', backgroundColor: '#1e2a45' },
-  markerCount: { color: '#fff', fontSize: 10, fontWeight: '700', marginTop: 2 },
-
+  // Match card — floats above bottom nav
   card: {
-    backgroundColor: '#131929', borderTopLeftRadius: 20, borderTopRightRadius: 20,
-    paddingBottom: 8,
+    position: 'absolute', left: 12, right: 12, bottom: 86,
+    backgroundColor: colors.bgElevated, borderRadius: 20,
+    paddingBottom: 14, paddingTop: 6,
+    borderWidth: 1, borderColor: colors.borderSubtle,
+    shadowColor: '#000', shadowOpacity: 0.5, shadowRadius: 16, shadowOffset: { width: 0, height: 8 }, elevation: 12,
+    zIndex: 5,
   },
   cardHandle: {
-    width: 40, height: 4, backgroundColor: '#2a3550',
-    borderRadius: 2, alignSelf: 'center', marginTop: 10, marginBottom: 12,
+    width: 40, height: 4, backgroundColor: colors.border,
+    borderRadius: 2, alignSelf: 'center', marginTop: 8, marginBottom: 12,
   },
-  cardContent: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingBottom: 12 },
+  cardCloseBtn: {
+    position: 'absolute', top: 10, right: 10,
+    width: 28, height: 28, borderRadius: 14,
+    backgroundColor: colors.bg, alignItems: 'center', justifyContent: 'center',
+    borderWidth: 1, borderColor: colors.borderSubtle, zIndex: 5,
+  },
+  cardContent: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingBottom: 4 },
   cardIconBox: {
-    width: 52, height: 52, borderRadius: 12,
-    backgroundColor: '#f5c518', alignItems: 'center', justifyContent: 'center', marginRight: 12,
+    width: 56, height: 56, borderRadius: 14,
+    backgroundColor: colors.primary, alignItems: 'center', justifyContent: 'center', marginRight: 14,
+    shadowColor: colors.primary, shadowOpacity: 0.5, shadowRadius: 10, shadowOffset: { width: 0, height: 4 }, elevation: 6,
   },
   cardInfo: { flex: 1 },
-  cardTitle: { color: '#fff', fontSize: 16, fontWeight: '700' },
-  cardVs: { color: '#f5c518' },
-  cardLocation: { color: '#8896aa', fontSize: 12 },
-  cardMeta: { flexDirection: 'row', alignItems: 'center', marginTop: 6, gap: 6 },
-  cardMetaText: { color: '#8896aa', fontSize: 12 },
+  cardTitle: { color: colors.text, fontSize: 17, fontWeight: '800', letterSpacing: 0.2 },
+  cardVs: { color: colors.primaryLight, fontWeight: '700' },
+  cardLocation: { color: colors.textMuted, fontSize: 12, flexShrink: 1 },
+  cardMeta: { flexDirection: 'row', alignItems: 'center', marginTop: 6, gap: 6, flexWrap: 'wrap' },
+  cardMetaText: { color: colors.textMuted, fontSize: 12, fontWeight: '500' },
   openBadge: {
-    backgroundColor: '#0d2a1a', borderRadius: 4,
-    paddingHorizontal: 6, paddingVertical: 2,
+    backgroundColor: colors.successBg, borderRadius: 6,
+    paddingHorizontal: 8, paddingVertical: 3, marginLeft: 4,
   },
-  openBadgeText: { color: '#2ecc71', fontSize: 11, fontWeight: '600' },
-  cardArrow: { padding: 8 },
+  openBadgeText: { color: colors.success, fontSize: 10, fontWeight: '700', letterSpacing: 0.5 },
+  cardArrow: { padding: 10, backgroundColor: colors.primaryTint, borderRadius: 12 },
 
+  // Bottom nav floats at the bottom
   bottomNav: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-around',
-    backgroundColor: '#131929', paddingVertical: 10, paddingHorizontal: 32,
-    borderTopWidth: 1, borderTopColor: '#1e2a45',
+    position: 'absolute', left: 0, right: 0, bottom: 0,
+    flexDirection: 'row', alignItems: 'center',
+    backgroundColor: colors.bgElevated,
+    paddingTop: 8, paddingBottom: 12, paddingHorizontal: 24,
+    borderTopWidth: 1, borderTopColor: colors.borderSubtle,
+    zIndex: 10,
   },
-  navItem: { alignItems: 'center' },
-  navLabel: { color: '#4a5568', fontSize: 11, marginTop: 2 },
-  navLabelActive: { color: '#f5c518', fontSize: 11, marginTop: 2, fontWeight: '700' },
+  navItem: { flex: 1, alignItems: 'center', gap: 3, paddingVertical: 6 },
+  navIconWrap: { width: 28, height: 28, alignItems: 'center', justifyContent: 'center' },
+  navLabel: { color: colors.textFaint, fontSize: 10, fontWeight: '600', letterSpacing: 0.3 },
+  navLabelActive: { color: colors.primary, fontSize: 10, fontWeight: '800', letterSpacing: 0.3 },
+  fabWrap: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   fabBtn: {
-    width: 52, height: 52, borderRadius: 26,
-    backgroundColor: '#f5c518', alignItems: 'center', justifyContent: 'center',
-    elevation: 6, marginBottom: 8,
+    width: 52, height: 52, borderRadius: 18,
+    backgroundColor: colors.primary, alignItems: 'center', justifyContent: 'center',
+    shadowColor: colors.primary, shadowOpacity: 0.55, shadowRadius: 12, shadowOffset: { width: 0, height: 4 }, elevation: 8,
   },
 });
