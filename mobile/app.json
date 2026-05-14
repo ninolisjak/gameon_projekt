@@ -18,12 +18,10 @@
     },
     "android": {
       "package": "com.RISacc.gameontest",
-      "adaptiveIcon": {
-        "foregroundImage": "./assets/adaptive-icon.png",
-        "backgroundColor": "#ffffff"
-      },
+      "adaptiveIcon": { "foregroundImage": "./assets/adaptive-icon.png", "backgroundColor": "#ffffff" },
       "edgeToEdgeEnabled": true,
-      "predictiveBackGestureEnabled": false
+      "predictiveBackGestureEnabled": false,
+      "config": { "googleMaps": { "apiKey": "" } }
     },
     "web": {
       "favicon": "./assets/favicon.png"
