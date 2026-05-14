@@ -48,6 +48,21 @@ export const styles = StyleSheet.create({
   },
   searchInput: { flex: 1, color: '#fff', fontSize: 14, fontWeight: '500', padding: 0 },
 
+  radiusRow: { marginTop: 10 },
+  radiusScroll: { gap: 6 },
+  radiusPill: {
+    paddingHorizontal: 14, paddingVertical: 7, borderRadius: 20,
+    backgroundColor: 'rgba(255,255,255,0.12)',
+    borderWidth: 1, borderColor: 'rgba(255,255,255,0.18)',
+  },
+  radiusPillActive: { backgroundColor: '#fff', borderColor: '#fff' },
+  radiusPillText: { color: 'rgba(255,255,255,0.75)', fontSize: 12, fontWeight: '700' },
+  radiusPillTextActive: { color: colors.primary },
+  radiusCount: {
+    color: 'rgba(255,255,255,0.55)', fontSize: 11, fontWeight: '600',
+    alignSelf: 'center', marginLeft: 4,
+  },
+
   // Locate button — floats over map
   locationBtn: {
     position: 'absolute', right: 16, bottom: 100,
@@ -94,6 +109,11 @@ export const styles = StyleSheet.create({
     paddingHorizontal: 8, paddingVertical: 3, marginLeft: 4,
   },
   openBadgeText: { color: colors.success, fontSize: 10, fontWeight: '700', letterSpacing: 0.5 },
+  fullBadge: {
+    backgroundColor: 'rgba(239,68,68,0.15)', borderRadius: 6,
+    paddingHorizontal: 8, paddingVertical: 3, marginLeft: 4,
+  },
+  fullBadgeText: { color: colors.danger, fontSize: 10, fontWeight: '700', letterSpacing: 0.5 },
   cardArrow: { padding: 10, backgroundColor: colors.primaryTint, borderRadius: 12 },
 
   // Bottom nav floats at the bottom

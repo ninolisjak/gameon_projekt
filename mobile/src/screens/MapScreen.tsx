@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Text, TouchableOpacity, TextInput, StatusBar } from 'react-native';
+import { View, Text, TouchableOpacity, TextInput, StatusBar, ScrollView } from 'react-native';
 import { WebView } from 'react-native-webview';
 import { Ionicons } from '@expo/vector-icons';
 import { subscribeMatches } from '../services/matchService';
@@ -34,15 +34,36 @@ const TEST_MATCH: Match = {
   createdBy: 'demo1',
 };
 
+const RADIUS_OPTIONS: (number | null)[] = [1, 2, 5, 10, null];
+const MAP_CENTER_DEFAULT = { lat: 46.5547, lng: 15.6459 };
+
+function haversineKm(lat1: number, lng1: number, lat2: number, lng2: number): number {
+  const R = 6371;
+  const toRad = (d: number) => d * Math.PI / 180;
+  const dLat = toRad(lat2 - lat1);
+  const dLng = toRad(lng2 - lng1);
+  const a = Math.sin(dLat / 2) ** 2
+    + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2;
+  return R * 2 * Math.asin(Math.sqrt(a));
+}
+
+function distanceLabel(lat1: number, lng1: number, lat2: number, lng2: number): string {
+  const d = haversineKm(lat1, lng1, lat2, lng2);
+  return d < 1 ? `${Math.round(d * 1000)} m` : `${d.toFixed(1)} km`;
+}
+
 function formatTime(ts: any): string {
   if (!ts) return '—';
   const d = ts.toDate ? ts.toDate() : new Date(ts);
   return d.toLocaleTimeString('sl-SI', { hour: '2-digit', minute: '2-digit' });
 }
 
-function buildMapHtml(matches: Match[]) {
-  const allMarkers = [TEST_MATCH, ...matches];
-  const markers = allMarkers.map(m => {
+function buildMapHtml(
+  visibleMatches: Match[],
+  center: { lat: number; lng: number },
+  radiusKm: number | null,
+) {
+  const markers = visibleMatches.map(m => {
     const isFutsal = m.sport === 'futsal';
     const icon = isFutsal ? '⚽' : '🏀';
     const full = m.filledSpots >= m.totalSpots;
@@ -76,6 +97,17 @@ function buildMapHtml(matches: Match[]) {
     return `L.marker([${m.location.lat},${m.location.lng}],{icon:L.divIcon({className:'gameon-marker',html:${JSON.stringify(html)},iconSize:[60,40],iconAnchor:[30,40]})}).addTo(map).on('click',()=>window.ReactNativeWebView.postMessage('${m.id}'));`;
   }).join('\n');
 
+  const circleJs = radiusKm !== null ? `
+    L.circle([${center.lat},${center.lng}],{
+      radius:${radiusKm * 1000},
+      color:'#3b82f6',fillColor:'#3b82f6',
+      fillOpacity:0.07,weight:2,dashArray:'8,5'
+    }).addTo(map);
+    L.circleMarker([${center.lat},${center.lng}],{
+      radius:5,color:'#3b82f6',fillColor:'#60a5fa',fillOpacity:1,weight:2
+    }).addTo(map);
+  ` : '';
+
   return `<!DOCTYPE html><html><head>
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
@@ -88,9 +120,10 @@ function buildMapHtml(matches: Match[]) {
 </style>
 </head><body><div id="map"></div>
 <script>
-var map=L.map('map',{zoomControl:false,attributionControl:false}).setView([46.5547,15.6459],14);
+var map=L.map('map',{zoomControl:false,attributionControl:false}).setView([${center.lat},${center.lng}],14);
 L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19}).addTo(map);
 ${markers}
+${circleJs}
 </script></body></html>`;
 }
 
@@ -98,15 +131,51 @@ export default function MapScreen() {
   const [matches, setMatches] = React.useState<Match[]>([]);
   const [selected, setSelected] = React.useState<Match | null>(null);
   const [search, setSearch] = React.useState('');
+  const [radius, setRadius] = React.useState<number | null>(null);
+  const [mapCenter, setMapCenter] = React.useState(MAP_CENTER_DEFAULT);
+  const webViewRef = React.useRef<WebView>(null);
   const navigation = useNavigation<any>();
 
   useFocusEffect(
     React.useCallback(() => subscribeMatches(setMatches), [])
   );
 
+  const visibleMatches = React.useMemo(() => {
+    const all = [TEST_MATCH, ...matches];
+    return radius === null
+      ? all
+      : all.filter(m => haversineKm(mapCenter.lat, mapCenter.lng, m.location.lat, m.location.lng) <= radius);
+  }, [matches, mapCenter, radius]);
+
+  React.useEffect(() => {
+    if (selected && radius !== null) {
+      const dist = haversineKm(mapCenter.lat, mapCenter.lng, selected.location.lat, selected.location.lng);
+      if (dist > radius) setSelected(null);
+    }
+  }, [radius, mapCenter]);
+
+  const mapHtml = React.useMemo(
+    () => buildMapHtml(visibleMatches, mapCenter, radius),
+    [visibleMatches, mapCenter, radius],
+  );
+
+  function handleLocate() {
+    webViewRef.current?.injectJavaScript(`
+      navigator.geolocation.getCurrentPosition(
+        function(p){window.ReactNativeWebView.postMessage(JSON.stringify({type:'loc',lat:p.coords.latitude,lng:p.coords.longitude}));},
+        function(){},
+        {enableHighAccuracy:true,timeout:8000}
+      );true;
+    `);
+  }
+
   function handleMessage(e: any) {
-    const id = e.nativeEvent.data;
-    const m = [TEST_MATCH, ...matches].find(x => x.id === id);
+    const data = e.nativeEvent.data;
+    try {
+      const msg = JSON.parse(data);
+      if (msg.type === 'loc') { setMapCenter({ lat: msg.lat, lng: msg.lng }); return; }
+    } catch {}
+    const m = visibleMatches.find(x => x.id === data);
     if (m) setSelected(m);
   }
 
@@ -114,18 +183,18 @@ export default function MapScreen() {
     navigation.navigate('MatchDetails', { matchId: m.id, initial: m });
   }
 
-  const mapHtml = React.useMemo(() => buildMapHtml(matches), [matches]);
-
   return (
     <View style={styles.container}>
       <StatusBar barStyle="light-content" backgroundColor={colors.primary} translucent={false} />
 
       {/* Map fills the entire screen */}
       <WebView
+        ref={webViewRef}
         source={{ html: mapHtml }}
         style={styles.map}
         onMessage={handleMessage}
         javaScriptEnabled
+        geolocationEnabled
         originWhitelist={['*']}
       />
 
@@ -163,11 +232,33 @@ export default function MapScreen() {
             />
             <Ionicons name="options-outline" size={18} color="rgba(255,255,255,0.85)" />
           </View>
+
+          <View style={styles.radiusRow}>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.radiusScroll}>
+              {RADIUS_OPTIONS.map(r => (
+                <TouchableOpacity
+                  key={String(r)}
+                  style={[styles.radiusPill, radius === r && styles.radiusPillActive]}
+                  onPress={() => setRadius(r)}
+                  activeOpacity={0.8}
+                >
+                  <Text style={[styles.radiusPillText, radius === r && styles.radiusPillTextActive]}>
+                    {r === null ? 'Vse' : `${r} km`}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+              {radius !== null && (
+                <Text style={styles.radiusCount}>
+                  {visibleMatches.length} {visibleMatches.length === 1 ? 'tekma' : 'tekem'}
+                </Text>
+              )}
+            </ScrollView>
+          </View>
         </View>
       </SafeAreaView>
 
       {/* Locate button */}
-      <TouchableOpacity style={styles.locationBtn}>
+      <TouchableOpacity style={styles.locationBtn} onPress={handleLocate}>
         <Ionicons name="locate-outline" size={20} color={colors.primaryLight} />
       </TouchableOpacity>
 
@@ -208,9 +299,19 @@ export default function MapScreen() {
                 <Text style={styles.cardMetaText}>{formatTime(selected.datetime)}</Text>
                 <Ionicons name="people-outline" size={12} color={colors.textMuted} style={{ marginLeft: 6 }} />
                 <Text style={styles.cardMetaText}>{selected.filledSpots}/{selected.totalSpots}</Text>
-                <View style={styles.openBadge}>
-                  <Text style={styles.openBadgeText}>ODPRTO</Text>
-                </View>
+                <Ionicons name="navigate-outline" size={12} color={colors.textMuted} style={{ marginLeft: 6 }} />
+                <Text style={styles.cardMetaText}>
+                  {distanceLabel(mapCenter.lat, mapCenter.lng, selected.location.lat, selected.location.lng)}
+                </Text>
+                {selected.filledSpots >= selected.totalSpots ? (
+                  <View style={styles.fullBadge}>
+                    <Text style={styles.fullBadgeText}>POLNO</Text>
+                  </View>
+                ) : (
+                  <View style={styles.openBadge}>
+                    <Text style={styles.openBadgeText}>ODPRTO</Text>
+                  </View>
+                )}
               </View>
             </View>
             <View style={styles.cardArrow}>
