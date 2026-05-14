@@ -26,7 +26,14 @@
     "web": {
       "favicon": "./assets/favicon.png"
     },
-    "plugins": [],
+    "plugins": [
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "GameOn potrebuje lokacijo za prikaz tekem v bližini."
+        }
+      ]
+    ],
     "extra": {
       "eas": {
         "projectId": "655bb96f-5538-4365-a60b-6593417d4944"

@@ -1,7 +1,8 @@
 import React from 'react';
-import { View, Text, TouchableOpacity, TextInput, StatusBar, ScrollView } from 'react-native';
+import { View, Text, TouchableOpacity, TextInput, StatusBar, ScrollView, Alert } from 'react-native';
 import { WebView } from 'react-native-webview';
 import { Ionicons } from '@expo/vector-icons';
+import * as Location from 'expo-location';
 import { subscribeMatches } from '../services/matchService';
 import { useNavigation, useFocusEffect, DrawerActions } from '@react-navigation/native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -133,7 +134,6 @@ export default function MapScreen() {
   const [search, setSearch] = React.useState('');
   const [radius, setRadius] = React.useState<number | null>(null);
   const [mapCenter, setMapCenter] = React.useState(MAP_CENTER_DEFAULT);
-  const webViewRef = React.useRef<WebView>(null);
   const navigation = useNavigation<any>();
 
   useFocusEffect(
@@ -159,22 +159,22 @@ export default function MapScreen() {
     [visibleMatches, mapCenter, radius],
   );
 
-  function handleLocate() {
-    webViewRef.current?.injectJavaScript(`
-      navigator.geolocation.getCurrentPosition(
-        function(p){window.ReactNativeWebView.postMessage(JSON.stringify({type:'loc',lat:p.coords.latitude,lng:p.coords.longitude}));},
-        function(){},
-        {enableHighAccuracy:true,timeout:8000}
-      );true;
-    `);
+  async function handleLocate() {
+    const { status } = await Location.requestForegroundPermissionsAsync();
+    if (status !== 'granted') {
+      Alert.alert('Dovoljenje zavrnjeno', 'GameOn potrebuje dostop do lokacije za prikaz tekem v bližini.');
+      return;
+    }
+    try {
+      const pos = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+      setMapCenter({ lat: pos.coords.latitude, lng: pos.coords.longitude });
+    } catch {
+      Alert.alert('Lokacija ni dostopna', 'Preveri ali so lokacijske storitve vklopljene.');
+    }
   }
 
   function handleMessage(e: any) {
     const data = e.nativeEvent.data;
-    try {
-      const msg = JSON.parse(data);
-      if (msg.type === 'loc') { setMapCenter({ lat: msg.lat, lng: msg.lng }); return; }
-    } catch {}
     const m = visibleMatches.find(x => x.id === data);
     if (m) setSelected(m);
   }
@@ -189,12 +189,10 @@ export default function MapScreen() {
 
       {/* Map fills the entire screen */}
       <WebView
-        ref={webViewRef}
         source={{ html: mapHtml }}
         style={styles.map}
         onMessage={handleMessage}
         javaScriptEnabled
-        geolocationEnabled
         originWhitelist={['*']}
       />
 
