@@ -3,8 +3,7 @@ import { View, Text, ScrollView, TouchableOpacity, Alert, ActivityIndicator, Sta
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { auth } from '../config/firebase';
-import { joinMatch, leaveMatch, subscribeMatch, Match } from '../services/matchService';
+import { joinMatch, leaveMatch, leaveWaitlist, subscribeMatch, Match, DEMO_USERS } from '../services/matchService';
 import { styles } from '../styles/MatchDetailsScreenStyles';
 import { colors } from '../styles/theme';
 
@@ -27,6 +26,7 @@ export default function MatchDetailsScreen() {
   const [match, setMatch] = React.useState<Match | null>(initial ?? null);
   const [loading, setLoading] = React.useState(!initial);
   const [busy, setBusy] = React.useState(false);
+  const [userId, setUserId] = React.useState<string>('niko');
 
   React.useEffect(() => {
     const unsub = subscribeMatch(
@@ -37,8 +37,10 @@ export default function MatchDetailsScreen() {
     return unsub;
   }, [matchId]);
 
-  const userId = auth.currentUser?.uid ?? 'anon';
+  const waitlist = match?.waitlist ?? [];
   const isJoined = !!match?.players?.includes(userId);
+  const isWaitlisted = waitlist.includes(userId);
+  const waitlistPosition = isWaitlisted ? waitlist.indexOf(userId) + 1 : 0;
   const isCreator = match?.createdBy === userId;
   const isFull = !!match && match.filledSpots >= match.totalSpots;
   const progress = match ? Math.min(match.filledSpots / match.totalSpots, 1) : 0;
@@ -50,7 +52,10 @@ export default function MatchDetailsScreen() {
     if (matchId === 'test') { Alert.alert('Demo', 'Demo tekma — prijava ni možna.'); return; }
     setBusy(true);
     try {
-      await joinMatch(matchId, userId);
+      const result = await joinMatch(matchId, userId);
+      if (result.status === 'waitlisted') {
+        Alert.alert('Čakalna vrsta', `Tekma je polna. Dodan si na čakalno vrsto, pozicija #${result.position}.`);
+      }
     } catch (e: any) {
       Alert.alert('Napaka', e.message ?? 'Prijava ni uspela.');
     } finally { setBusy(false); }
@@ -59,7 +64,10 @@ export default function MatchDetailsScreen() {
   async function handleLeave() {
     if (!match) return;
     if (matchId === 'test') { Alert.alert('Demo', 'Demo tekma — odjava ni možna.'); return; }
-    Alert.alert('Odjava', 'Si prepričan, da se želiš odjaviti?', [
+    const promotionMsg = waitlist.length > 0
+      ? '\n\nPrvi igralec iz čakalne vrste bo samodejno prevzel tvoje mesto.'
+      : '';
+    Alert.alert('Odjava', `Si prepričan, da se želiš odjaviti?${promotionMsg}`, [
       { text: 'Prekliči', style: 'cancel' },
       {
         text: 'Odjava', style: 'destructive',
@@ -75,6 +83,16 @@ export default function MatchDetailsScreen() {
     ]);
   }
 
+  async function handleLeaveWaitlist() {
+    if (!match || matchId === 'test') return;
+    setBusy(true);
+    try {
+      await leaveWaitlist(matchId, userId);
+    } catch (e: any) {
+      Alert.alert('Napaka', e.message ?? 'Odstranitev ni uspela.');
+    } finally { setBusy(false); }
+  }
+
   if (loading || !match) {
     return (
       <View style={styles.loadingWrap}>
@@ -84,6 +102,7 @@ export default function MatchDetailsScreen() {
   }
 
   const emptySlots = Math.max(0, match.totalSpots - (match.players?.length ?? match.filledSpots));
+  const waitlistCount = waitlist.length;
 
   return (
     <View style={styles.container}>
@@ -112,6 +131,22 @@ export default function MatchDetailsScreen() {
         </SafeAreaView>
 
         <View style={styles.body}>
+          <View style={styles.userSwitcherCard}>
+            <Text style={styles.userSwitcherLabel}>Demo · izberi identiteto</Text>
+            <View style={styles.userSwitcherRow}>
+              {DEMO_USERS.map(u => (
+                <TouchableOpacity
+                  key={u}
+                  style={[styles.userPill, userId === u && styles.userPillActive]}
+                  onPress={() => setUserId(u)}
+                  activeOpacity={0.8}
+                >
+                  <Text style={[styles.userPillText, userId === u && styles.userPillTextActive]}>{u}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          </View>
+
           <View style={styles.infoGrid}>
             <View style={styles.infoCard}>
               <View style={styles.infoIconRow}>
@@ -150,9 +185,12 @@ export default function MatchDetailsScreen() {
                 <View style={styles.playerAvatar}>
                   <Ionicons name="person" size={18} color={colors.primaryLight} />
                 </View>
-                <Text style={styles.playerName} numberOfLines={1}>
-                  {p === userId ? 'Ti' : `Igralec ${idx + 1}`}
-                </Text>
+                <Text style={styles.playerName} numberOfLines={1}>{p}</Text>
+                {p === userId && (
+                  <View style={styles.youBadge}>
+                    <Text style={styles.youBadgeText}>TI</Text>
+                  </View>
+                )}
                 {match.createdBy === p && (
                   <View style={styles.playerBadge}>
                     <Text style={styles.playerBadgeText}>HOST</Text>
@@ -169,30 +207,67 @@ export default function MatchDetailsScreen() {
                 <Text style={styles.emptyText}>Prosto mesto</Text>
               </View>
             ))}
+
+            {waitlistCount > 0 && (
+              <View style={styles.waitlistDivider}>
+                <View style={styles.waitlistHeader}>
+                  <Text style={styles.waitlistTitle}>Čakalna vrsta</Text>
+                  <Text style={styles.waitlistCount}>{waitlistCount} {waitlistCount === 1 ? 'oseba' : 'oseb'}</Text>
+                </View>
+                {waitlist.map((p, idx) => (
+                  <View key={`wl-${p}-${idx}`} style={styles.waitlistRow}>
+                    <View style={styles.waitlistAvatar}>
+                      <Ionicons name="hourglass-outline" size={16} color={colors.warning} />
+                    </View>
+                    <Text style={styles.playerName} numberOfLines={1}>{p}</Text>
+                    {p === userId && (
+                      <View style={styles.youBadge}>
+                        <Text style={styles.youBadgeText}>TI</Text>
+                      </View>
+                    )}
+                    <View style={styles.waitlistPositionBadge}>
+                      <Text style={styles.waitlistPositionText}>#{idx + 1}</Text>
+                    </View>
+                  </View>
+                ))}
+              </View>
+            )}
           </View>
         </View>
       </ScrollView>
 
       <View style={styles.ctaBar}>
-        {isJoined ? (
-          isCreator ? (
-            <View style={styles.fullBtn}>
-              <Text style={styles.fullBtnText}>Ti si ustvarjalec tekme</Text>
-            </View>
-          ) : (
-            <TouchableOpacity style={styles.leaveBtn} onPress={handleLeave} disabled={busy}>
-              {busy ? <ActivityIndicator color={colors.danger} /> : (
-                <>
-                  <Ionicons name="exit-outline" size={20} color={colors.danger} />
-                  <Text style={styles.leaveBtnText}>Odjavi se</Text>
-                </>
-              )}
-            </TouchableOpacity>
-          )
-        ) : isFull ? (
+        {isCreator ? (
           <View style={styles.fullBtn}>
-            <Text style={styles.fullBtnText}>Tekma je polna</Text>
+            <Text style={styles.fullBtnText}>Ti si ustvarjalec tekme</Text>
           </View>
+        ) : isJoined ? (
+          <TouchableOpacity style={styles.leaveBtn} onPress={handleLeave} disabled={busy}>
+            {busy ? <ActivityIndicator color={colors.danger} /> : (
+              <>
+                <Ionicons name="exit-outline" size={20} color={colors.danger} />
+                <Text style={styles.leaveBtnText}>Odjavi se</Text>
+              </>
+            )}
+          </TouchableOpacity>
+        ) : isWaitlisted ? (
+          <TouchableOpacity style={styles.waitlistLeaveBtn} onPress={handleLeaveWaitlist} disabled={busy}>
+            {busy ? <ActivityIndicator color={colors.warning} /> : (
+              <>
+                <Ionicons name="close-circle-outline" size={20} color={colors.warning} />
+                <Text style={styles.waitlistLeaveBtnText}>Zapusti čakalno vrsto (#{waitlistPosition})</Text>
+              </>
+            )}
+          </TouchableOpacity>
+        ) : isFull ? (
+          <TouchableOpacity style={styles.waitlistBtn} onPress={handleJoin} disabled={busy}>
+            {busy ? <ActivityIndicator color="#fff" /> : (
+              <>
+                <Ionicons name="hourglass-outline" size={20} color="#fff" />
+                <Text style={styles.waitlistBtnText}>Pridruži se čakalni vrsti</Text>
+              </>
+            )}
+          </TouchableOpacity>
         ) : (
           <TouchableOpacity style={styles.joinBtn} onPress={handleJoin} disabled={busy}>
             {busy ? <ActivityIndicator color="#fff" /> : (

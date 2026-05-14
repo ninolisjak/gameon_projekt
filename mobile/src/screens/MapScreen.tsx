@@ -2,8 +2,7 @@ import React from 'react';
 import { View, Text, TouchableOpacity, TextInput, StatusBar } from 'react-native';
 import { WebView } from 'react-native-webview';
 import { Ionicons } from '@expo/vector-icons';
-import { collection, query, where, onSnapshot } from 'firebase/firestore';
-import { db } from '../config/firebase';
+import { subscribeMatches } from '../services/matchService';
 import { useNavigation, useFocusEffect, DrawerActions } from '@react-navigation/native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { styles } from '../styles/MapScreenStyles';
@@ -18,6 +17,7 @@ type Match = {
   filledSpots: number;
   status: string;
   players?: string[];
+  waitlist?: string[];
   createdBy?: string;
 };
 
@@ -30,6 +30,7 @@ const TEST_MATCH: Match = {
   filledSpots: 3,
   status: 'open',
   players: ['demo1', 'demo2', 'demo3'],
+  waitlist: [],
   createdBy: 'demo1',
 };
 
@@ -100,13 +101,7 @@ export default function MapScreen() {
   const navigation = useNavigation<any>();
 
   useFocusEffect(
-    React.useCallback(() => {
-      const q = query(collection(db, 'matches'), where('status', '==', 'open'), where('isPublic', '==', true));
-      const unsub = onSnapshot(q, snap => {
-        setMatches(snap.docs.map(d => ({ id: d.id, ...d.data() } as Match)));
-      }, err => console.error('Map snapshot error', err));
-      return unsub;
-    }, [])
+    React.useCallback(() => subscribeMatches(setMatches), [])
   );
 
   function handleMessage(e: any) {
