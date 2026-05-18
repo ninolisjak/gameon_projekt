@@ -5,8 +5,8 @@ import { useNavigation, useRoute } from '@react-navigation/native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { auth } from '../config/firebase';
 import { joinMatch, leaveMatch, subscribeMatch, Match } from '../services/matchService';
-import { styles } from '../styles/MatchDetailsScreenStyles';
-import { colors } from '../styles/theme';
+import { makeStyles } from '../styles/MatchDetailsScreenStyles';
+import { useColors } from '../context/PremiumContext';
 
 function formatDate(ts: any): string {
   if (!ts) return '—';
@@ -23,6 +23,8 @@ export default function MatchDetailsScreen() {
   const navigation = useNavigation<any>();
   const route = useRoute<any>();
   const { matchId, initial } = route.params as { matchId: string; initial?: Match };
+  const colors = useColors();
+  const styles = React.useMemo(() => makeStyles(colors), [colors]);
 
   const [match, setMatch] = React.useState<Match | null>(initial ?? null);
   const [loading, setLoading] = React.useState(!initial);

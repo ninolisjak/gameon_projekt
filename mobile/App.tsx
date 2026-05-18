@@ -9,14 +9,18 @@ import { Ionicons } from '@expo/vector-icons';
 import MapScreen from './src/screens/MapScreen';
 import CreateMatchScreen from './src/screens/CreateMatchScreen';
 import MatchDetailsScreen from './src/screens/MatchDetailsScreen';
-import { drawerStyles } from './src/styles/AppStyles';
+import ProfileScreen from './src/screens/ProfileScreen';
+import { makeDrawerStyles } from './src/styles/AppStyles';
+import { PremiumProvider, useColors } from './src/context/PremiumContext';
 
 const Stack = createStackNavigator();
 const Drawer = createDrawerNavigator();
 
 function DrawerContent(props: any) {
+  const colors = useColors();
+  const drawerStyles = React.useMemo(() => makeDrawerStyles(colors), [colors]);
   return (
-    <DrawerContentScrollView {...props} style={{ backgroundColor: '#0a0e1a' }}>
+    <DrawerContentScrollView {...props} style={{ backgroundColor: colors.bg }}>
       <View style={drawerStyles.drawerHeader}>
         <View style={drawerStyles.logoBox}>
           <Ionicons name="football" size={24} color="#fff" />
@@ -28,9 +32,9 @@ function DrawerContent(props: any) {
       </View>
       <DrawerItemList
         {...props}
-        activeTintColor="#3b82f6"
-        inactiveTintColor="#8896aa"
-        activeBackgroundColor="#1a2540"
+        activeTintColor={colors.primary}
+        inactiveTintColor={colors.textMuted}
+        activeBackgroundColor={colors.bgSelected}
         inactiveBackgroundColor="transparent"
       />
     </DrawerContentScrollView>
@@ -48,8 +52,9 @@ function MainStack() {
 }
 
 function MainDrawer() {
+  const colors = useColors();
   return (
-    <Drawer.Navigator drawerContent={(props) => <DrawerContent {...props} />} screenOptions={{ headerShown: false, drawerStyle: { backgroundColor: '#0a0e1a', width: 260 } }}>
+    <Drawer.Navigator drawerContent={(props) => <DrawerContent {...props} />} screenOptions={{ headerShown: false, drawerStyle: { backgroundColor: colors.bg, width: 260 } }}>
       <Drawer.Screen
         name="Home"
         component={MainStack}
@@ -60,7 +65,7 @@ function MainDrawer() {
       />
       <Drawer.Screen
         name="Profile"
-        component={MapScreen}
+        component={ProfileScreen}
         options={{
           title: 'Profil',
           drawerIcon: ({ color }) => <Ionicons name="person-outline" size={20} color={color} />,
@@ -80,10 +85,12 @@ function MainDrawer() {
 
 export default function App() {
   return (
-    <SafeAreaProvider>
-      <NavigationContainer>
-        <MainDrawer />
-      </NavigationContainer>
-    </SafeAreaProvider>
+    <PremiumProvider>
+      <SafeAreaProvider>
+        <NavigationContainer>
+          <MainDrawer />
+        </NavigationContainer>
+      </SafeAreaProvider>
+    </PremiumProvider>
   );
 }
