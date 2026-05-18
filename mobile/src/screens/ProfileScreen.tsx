@@ -58,7 +58,15 @@ export default function ProfileScreen() {
       <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
         <SafeAreaView edges={['top']} style={styles.hero}>
           <View style={styles.heroTopRow}>
-            <Text style={styles.heroTitle}>Profil</Text>
+            <View style={styles.heroLeftRow}>
+              <TouchableOpacity
+                style={styles.heroIconBtn}
+                onPress={() => (navigation.canGoBack() ? navigation.goBack() : navigation.navigate('Home'))}
+              >
+                <Ionicons name="arrow-back" size={22} color="#fff" />
+              </TouchableOpacity>
+              <Text style={styles.heroTitle}>Profil</Text>
+            </View>
             <TouchableOpacity
               style={styles.heroIconBtn}
               onPress={() => navigation.dispatch(DrawerActions.openDrawer())}
@@ -85,32 +93,34 @@ export default function ProfileScreen() {
         </SafeAreaView>
 
         <View style={styles.body}>
-          <View>
-            <Text style={styles.sectionLabel}>Statistika</Text>
-            <View style={styles.statsRow}>
-              <View style={styles.statCard}>
-                <View style={styles.statIconRow}>
-                  <View style={styles.statIconBox}>
-                    <Ionicons name="trending-up" size={16} color={colors.primaryLight} />
+          {isPremium && (
+            <View>
+              <Text style={styles.sectionLabel}>Statistika</Text>
+              <View style={styles.statsRow}>
+                <View style={styles.statCard}>
+                  <View style={styles.statIconRow}>
+                    <View style={styles.statIconBox}>
+                      <Ionicons name="trending-up" size={16} color={colors.primaryLight} />
+                    </View>
+                    <Text style={styles.statLabel}>ELO</Text>
                   </View>
-                  <Text style={styles.statLabel}>ELO</Text>
+                  <Text style={styles.statValue}>{elo}</Text>
+                  <Text style={styles.statSub}>Ocena spretnosti</Text>
                 </View>
-                <Text style={styles.statValue}>{elo}</Text>
-                <Text style={styles.statSub}>Ocena spretnosti</Text>
-              </View>
 
-              <View style={styles.statCard}>
-                <View style={styles.statIconRow}>
-                  <View style={styles.statIconBox}>
-                    <Ionicons name="shield-checkmark" size={16} color={colors.primaryLight} />
+                <View style={styles.statCard}>
+                  <View style={styles.statIconRow}>
+                    <View style={styles.statIconBox}>
+                      <Ionicons name="shield-checkmark" size={16} color={colors.primaryLight} />
+                    </View>
+                    <Text style={styles.statLabel}>Reputacija</Text>
                   </View>
-                  <Text style={styles.statLabel}>Reputacija</Text>
+                  <Text style={styles.statValue}>{reputation}</Text>
+                  <Text style={styles.statSub}>Zanesljivost igralca</Text>
                 </View>
-                <Text style={styles.statValue}>{reputation}</Text>
-                <Text style={styles.statSub}>Zanesljivost igralca</Text>
               </View>
             </View>
-          </View>
+          )}
 
           {isPremium ? (
             <View>

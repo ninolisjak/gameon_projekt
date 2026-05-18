@@ -12,6 +12,7 @@ export const makeStyles = (colors: Colors) => StyleSheet.create({
     shadowColor: colors.primary, shadowOpacity: 0.4, shadowRadius: 16, shadowOffset: { width: 0, height: 6 }, elevation: 8,
   },
   heroTopRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  heroLeftRow: { flexDirection: 'row', alignItems: 'center', gap: 12 },
   heroIconBtn: {
     width: 40, height: 40, borderRadius: 20,
     backgroundColor: 'rgba(255,255,255,0.18)',

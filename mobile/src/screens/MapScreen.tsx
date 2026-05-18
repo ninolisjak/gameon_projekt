@@ -242,7 +242,11 @@ export default function MapScreen() {
           </TouchableOpacity>
         </View>
 
-        <TouchableOpacity style={styles.navItem} activeOpacity={0.7}>
+        <TouchableOpacity
+          style={styles.navItem}
+          activeOpacity={0.7}
+          onPress={() => navigation.navigate('Profile')}
+        >
           <View style={styles.navIconWrap}>
             <Ionicons name="person-outline" size={24} color={colors.textFaint} />
           </View>
