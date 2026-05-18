@@ -1,7 +1,7 @@
 import { StyleSheet } from 'react-native';
-import { colors } from './theme';
+import { Colors } from './theme';
 
-export const styles = StyleSheet.create({
+export const makeStyles = (colors: Colors) => StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.bg },
   scroll: { paddingBottom: 120 },
 

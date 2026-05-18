@@ -5,11 +5,13 @@ import { useNavigation } from '@react-navigation/native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { auth } from '../config/firebase';
 import { createMatch } from '../services/matchService';
-import { styles } from '../styles/CreateMatchScreenStyles';
-import { colors } from '../styles/theme';
+import { makeStyles } from '../styles/CreateMatchScreenStyles';
+import { useColors } from '../context/PremiumContext';
 
 export default function CreateMatchScreen() {
   const navigation = useNavigation<any>();
+  const colors = useColors();
+  const styles = React.useMemo(() => makeStyles(colors), [colors]);
   const [sport, setSport] = React.useState<'futsal' | 'basketball'>('futsal');
   const [locationName, setLocationName] = React.useState('');
   const [lat, setLat] = React.useState('46.5547');

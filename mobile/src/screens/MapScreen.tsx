@@ -6,8 +6,8 @@ import { collection, query, where, onSnapshot } from 'firebase/firestore';
 import { db } from '../config/firebase';
 import { useNavigation, useFocusEffect, DrawerActions } from '@react-navigation/native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { styles } from '../styles/MapScreenStyles';
-import { colors } from '../styles/theme';
+import { makeStyles } from '../styles/MapScreenStyles';
+import { useColors } from '../context/PremiumContext';
 
 type Match = {
   id: string;
@@ -39,14 +39,14 @@ function formatTime(ts: any): string {
   return d.toLocaleTimeString('sl-SI', { hour: '2-digit', minute: '2-digit' });
 }
 
-function buildMapHtml(matches: Match[]) {
+function buildMapHtml(matches: Match[], accentColor: string) {
   const allMarkers = [TEST_MATCH, ...matches];
   const markers = allMarkers.map(m => {
     const isFutsal = m.sport === 'futsal';
     const icon = isFutsal ? '⚽' : '🏀';
     const full = m.filledSpots >= m.totalSpots;
-    const accent = full ? '#ef4444' : '#3b82f6';
-    const glow = full ? 'rgba(239,68,68,0.45)' : 'rgba(59,130,246,0.55)';
+    const accent = full ? '#ef4444' : accentColor;
+    const glow = full ? 'rgba(239,68,68,0.45)' : 'rgba(0,0,0,0.45)';
     const html = `
       <div style="position:relative;display:flex;flex-direction:column;align-items:center;cursor:pointer;">
         <div style="
@@ -98,6 +98,8 @@ export default function MapScreen() {
   const [selected, setSelected] = React.useState<Match | null>(null);
   const [search, setSearch] = React.useState('');
   const navigation = useNavigation<any>();
+  const colors = useColors();
+  const styles = React.useMemo(() => makeStyles(colors), [colors]);
 
   useFocusEffect(
     React.useCallback(() => {
@@ -119,7 +121,7 @@ export default function MapScreen() {
     navigation.navigate('MatchDetails', { matchId: m.id, initial: m });
   }
 
-  const mapHtml = React.useMemo(() => buildMapHtml(matches), [matches]);
+  const mapHtml = React.useMemo(() => buildMapHtml(matches, colors.primary), [matches, colors.primary]);
 
   return (
     <View style={styles.container}>
