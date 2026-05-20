@@ -1,9 +1,9 @@
 import React from 'react';
-import { View, Text, TouchableOpacity, TextInput, StatusBar } from 'react-native';
+import { View, Text, TouchableOpacity, TextInput, StatusBar, ScrollView, Alert } from 'react-native';
 import { WebView } from 'react-native-webview';
 import { Ionicons } from '@expo/vector-icons';
-import { collection, query, where, onSnapshot } from 'firebase/firestore';
-import { db } from '../config/firebase';
+import * as Location from 'expo-location';
+import { subscribeMatches } from '../services/matchService';
 import { useNavigation, useFocusEffect, DrawerActions } from '@react-navigation/native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { makeStyles } from '../styles/MapScreenStyles';
@@ -18,6 +18,7 @@ type Match = {
   filledSpots: number;
   status: string;
   players?: string[];
+  waitlist?: string[];
   createdBy?: string;
 };
 
@@ -30,8 +31,27 @@ const TEST_MATCH: Match = {
   filledSpots: 3,
   status: 'open',
   players: ['demo1', 'demo2', 'demo3'],
+  waitlist: [],
   createdBy: 'demo1',
 };
+
+const RADIUS_OPTIONS: (number | null)[] = [1, 2, 5, 10, null];
+const MAP_CENTER_DEFAULT = { lat: 46.5547, lng: 15.6459 };
+
+function haversineKm(lat1: number, lng1: number, lat2: number, lng2: number): number {
+  const R = 6371;
+  const toRad = (d: number) => d * Math.PI / 180;
+  const dLat = toRad(lat2 - lat1);
+  const dLng = toRad(lng2 - lng1);
+  const a = Math.sin(dLat / 2) ** 2
+    + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2;
+  return R * 2 * Math.asin(Math.sqrt(a));
+}
+
+function distanceLabel(lat1: number, lng1: number, lat2: number, lng2: number): string {
+  const d = haversineKm(lat1, lng1, lat2, lng2);
+  return d < 1 ? `${Math.round(d * 1000)} m` : `${d.toFixed(1)} km`;
+}
 
 function formatTime(ts: any): string {
   if (!ts) return '—';
@@ -75,6 +95,17 @@ function buildMapHtml(matches: Match[], accentColor: string) {
     return `L.marker([${m.location.lat},${m.location.lng}],{icon:L.divIcon({className:'gameon-marker',html:${JSON.stringify(html)},iconSize:[60,40],iconAnchor:[30,40]})}).addTo(map).on('click',()=>window.ReactNativeWebView.postMessage('${m.id}'));`;
   }).join('\n');
 
+  const circleJs = radiusKm !== null ? `
+    L.circle([${center.lat},${center.lng}],{
+      radius:${radiusKm * 1000},
+      color:'#3b82f6',fillColor:'#3b82f6',
+      fillOpacity:0.07,weight:2,dashArray:'8,5'
+    }).addTo(map);
+    L.circleMarker([${center.lat},${center.lng}],{
+      radius:5,color:'#3b82f6',fillColor:'#60a5fa',fillOpacity:1,weight:2
+    }).addTo(map);
+  ` : '';
+
   return `<!DOCTYPE html><html><head>
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
@@ -87,9 +118,10 @@ function buildMapHtml(matches: Match[], accentColor: string) {
 </style>
 </head><body><div id="map"></div>
 <script>
-var map=L.map('map',{zoomControl:false,attributionControl:false}).setView([46.5547,15.6459],14);
+var map=L.map('map',{zoomControl:false,attributionControl:false}).setView([${center.lat},${center.lng}],14);
 L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19}).addTo(map);
 ${markers}
+${circleJs}
 </script></body></html>`;
 }
 
@@ -97,23 +129,52 @@ export default function MapScreen() {
   const [matches, setMatches] = React.useState<Match[]>([]);
   const [selected, setSelected] = React.useState<Match | null>(null);
   const [search, setSearch] = React.useState('');
+  const [radius, setRadius] = React.useState<number | null>(null);
+  const [mapCenter, setMapCenter] = React.useState(MAP_CENTER_DEFAULT);
   const navigation = useNavigation<any>();
   const colors = useColors();
   const styles = React.useMemo(() => makeStyles(colors), [colors]);
 
   useFocusEffect(
-    React.useCallback(() => {
-      const q = query(collection(db, 'matches'), where('status', '==', 'open'), where('isPublic', '==', true));
-      const unsub = onSnapshot(q, snap => {
-        setMatches(snap.docs.map(d => ({ id: d.id, ...d.data() } as Match)));
-      }, err => console.error('Map snapshot error', err));
-      return unsub;
-    }, [])
+    React.useCallback(() => subscribeMatches(setMatches), [])
   );
 
+  const visibleMatches = React.useMemo(() => {
+    const all = [TEST_MATCH, ...matches];
+    return radius === null
+      ? all
+      : all.filter(m => haversineKm(mapCenter.lat, mapCenter.lng, m.location.lat, m.location.lng) <= radius);
+  }, [matches, mapCenter, radius]);
+
+  React.useEffect(() => {
+    if (selected && radius !== null) {
+      const dist = haversineKm(mapCenter.lat, mapCenter.lng, selected.location.lat, selected.location.lng);
+      if (dist > radius) setSelected(null);
+    }
+  }, [radius, mapCenter]);
+
+  const mapHtml = React.useMemo(
+    () => buildMapHtml(visibleMatches, mapCenter, radius),
+    [visibleMatches, mapCenter, radius],
+  );
+
+  async function handleLocate() {
+    const { status } = await Location.requestForegroundPermissionsAsync();
+    if (status !== 'granted') {
+      Alert.alert('Dovoljenje zavrnjeno', 'GameOn potrebuje dostop do lokacije za prikaz tekem v bližini.');
+      return;
+    }
+    try {
+      const pos = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+      setMapCenter({ lat: pos.coords.latitude, lng: pos.coords.longitude });
+    } catch {
+      Alert.alert('Lokacija ni dostopna', 'Preveri ali so lokacijske storitve vklopljene.');
+    }
+  }
+
   function handleMessage(e: any) {
-    const id = e.nativeEvent.data;
-    const m = [TEST_MATCH, ...matches].find(x => x.id === id);
+    const data = e.nativeEvent.data;
+    const m = visibleMatches.find(x => x.id === data);
     if (m) setSelected(m);
   }
 
@@ -170,11 +231,33 @@ export default function MapScreen() {
             />
             <Ionicons name="options-outline" size={18} color="rgba(255,255,255,0.85)" />
           </View>
+
+          <View style={styles.radiusRow}>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.radiusScroll}>
+              {RADIUS_OPTIONS.map(r => (
+                <TouchableOpacity
+                  key={String(r)}
+                  style={[styles.radiusPill, radius === r && styles.radiusPillActive]}
+                  onPress={() => setRadius(r)}
+                  activeOpacity={0.8}
+                >
+                  <Text style={[styles.radiusPillText, radius === r && styles.radiusPillTextActive]}>
+                    {r === null ? 'Vse' : `${r} km`}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+              {radius !== null && (
+                <Text style={styles.radiusCount}>
+                  {visibleMatches.length} {visibleMatches.length === 1 ? 'tekma' : 'tekem'}
+                </Text>
+              )}
+            </ScrollView>
+          </View>
         </View>
       </SafeAreaView>
 
       {/* Locate button */}
-      <TouchableOpacity style={styles.locationBtn}>
+      <TouchableOpacity style={styles.locationBtn} onPress={handleLocate}>
         <Ionicons name="locate-outline" size={20} color={colors.primaryLight} />
       </TouchableOpacity>
 
@@ -215,9 +298,19 @@ export default function MapScreen() {
                 <Text style={styles.cardMetaText}>{formatTime(selected.datetime)}</Text>
                 <Ionicons name="people-outline" size={12} color={colors.textMuted} style={{ marginLeft: 6 }} />
                 <Text style={styles.cardMetaText}>{selected.filledSpots}/{selected.totalSpots}</Text>
-                <View style={styles.openBadge}>
-                  <Text style={styles.openBadgeText}>ODPRTO</Text>
-                </View>
+                <Ionicons name="navigate-outline" size={12} color={colors.textMuted} style={{ marginLeft: 6 }} />
+                <Text style={styles.cardMetaText}>
+                  {distanceLabel(mapCenter.lat, mapCenter.lng, selected.location.lat, selected.location.lng)}
+                </Text>
+                {selected.filledSpots >= selected.totalSpots ? (
+                  <View style={styles.fullBadge}>
+                    <Text style={styles.fullBadgeText}>POLNO</Text>
+                  </View>
+                ) : (
+                  <View style={styles.openBadge}>
+                    <Text style={styles.openBadgeText}>ODPRTO</Text>
+                  </View>
+                )}
               </View>
             </View>
             <View style={styles.cardArrow}>

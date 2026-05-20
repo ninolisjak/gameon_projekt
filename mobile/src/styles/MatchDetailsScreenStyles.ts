@@ -80,6 +80,44 @@ export const makeStyles = (colors: Colors) => StyleSheet.create({
   },
   emptyText: { color: colors.textFaint, fontSize: 14, fontWeight: '500', fontStyle: 'italic' },
 
+  waitlistDivider: {
+    marginTop: 16, paddingTop: 16,
+    borderTopWidth: 1, borderTopColor: colors.borderSubtle,
+  },
+  waitlistHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 },
+  waitlistTitle: { color: colors.warning, fontSize: 15, fontWeight: '800' },
+  waitlistCount: { color: colors.warning, fontSize: 13, fontWeight: '700' },
+  waitlistRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 8, gap: 12 },
+  waitlistAvatar: {
+    width: 36, height: 36, borderRadius: 18,
+    backgroundColor: 'rgba(245,158,11,0.12)',
+    alignItems: 'center', justifyContent: 'center',
+    borderWidth: 1, borderColor: 'rgba(245,158,11,0.35)',
+  },
+  waitlistPositionBadge: {
+    backgroundColor: 'rgba(245,158,11,0.18)',
+    paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6,
+  },
+  waitlistPositionText: { color: colors.warning, fontSize: 10, fontWeight: '800', letterSpacing: 0.5 },
+  youBadge: {
+    backgroundColor: colors.primaryTint,
+    paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6,
+  },
+  youBadgeText: { color: colors.primaryLight, fontSize: 10, fontWeight: '800', letterSpacing: 0.5 },
+
+  waitlistBtn: {
+    backgroundColor: colors.warning, borderRadius: 14,
+    paddingVertical: 16, alignItems: 'center', flexDirection: 'row', justifyContent: 'center', gap: 8,
+    shadowColor: colors.warning, shadowOpacity: 0.4, shadowRadius: 12, shadowOffset: { width: 0, height: 4 }, elevation: 5,
+  },
+  waitlistBtnText: { color: '#fff', fontSize: 16, fontWeight: '800', letterSpacing: 0.3 },
+  waitlistLeaveBtn: {
+    backgroundColor: 'rgba(245,158,11,0.12)', borderRadius: 14,
+    paddingVertical: 16, alignItems: 'center', flexDirection: 'row', justifyContent: 'center', gap: 8,
+    borderWidth: 1, borderColor: colors.warning,
+  },
+  waitlistLeaveBtnText: { color: colors.warning, fontSize: 16, fontWeight: '800', letterSpacing: 0.3 },
+
   ctaBar: {
     position: 'absolute', left: 0, right: 0, bottom: 0,
     backgroundColor: colors.bgElevated,
@@ -106,4 +144,26 @@ export const makeStyles = (colors: Colors) => StyleSheet.create({
   fullBtnText: { color: colors.textMuted, fontSize: 16, fontWeight: '800', letterSpacing: 0.3 },
 
   loadingWrap: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.bg },
+
+  userSwitcherCard: {
+    backgroundColor: colors.bgElevated, borderRadius: 16, padding: 14,
+    borderWidth: 1, borderColor: colors.warning,
+  },
+  userSwitcherLabel: {
+    color: colors.warning, fontSize: 11, fontWeight: '800',
+    letterSpacing: 1.2, textTransform: 'uppercase', marginBottom: 8,
+  },
+  userSwitcherRow: { flexDirection: 'row', gap: 8 },
+  userPill: {
+    flex: 1, paddingVertical: 10, borderRadius: 10,
+    backgroundColor: colors.bg,
+    borderWidth: 1, borderColor: colors.borderSubtle,
+    alignItems: 'center',
+  },
+  userPillActive: {
+    backgroundColor: colors.primaryTint,
+    borderColor: colors.primary,
+  },
+  userPillText: { color: colors.textMuted, fontSize: 13, fontWeight: '700', textTransform: 'capitalize' },
+  userPillTextActive: { color: colors.primaryLight },
 });

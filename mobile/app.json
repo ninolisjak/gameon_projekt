@@ -21,12 +21,19 @@
       "adaptiveIcon": { "foregroundImage": "./assets/adaptive-icon.png", "backgroundColor": "#ffffff" },
       "edgeToEdgeEnabled": true,
       "predictiveBackGestureEnabled": false,
-      "config": { "googleMaps": { "apiKey": "" } }
+      "config": { "googleMaps": { "apiKey": "AIzaSyD7CpjZYP8qrm91cE5W1R7cef8pJo0UJhc" } }
     },
     "web": {
       "favicon": "./assets/favicon.png"
     },
-    "plugins": [],
+    "plugins": [
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "GameOn potrebuje lokacijo za prikaz tekem v bližini."
+        }
+      ]
+    ],
     "extra": {
       "eas": {
         "projectId": "655bb96f-5538-4365-a60b-6593417d4944"
