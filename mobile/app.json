@@ -21,7 +21,7 @@
       "adaptiveIcon": { "foregroundImage": "./assets/adaptive-icon.png", "backgroundColor": "#ffffff" },
       "edgeToEdgeEnabled": true,
       "predictiveBackGestureEnabled": false,
-      "config": { "googleMaps": { "apiKey": "" } }
+      "config": { "googleMaps": { "apiKey": "AIzaSyD7CpjZYP8qrm91cE5W1R7cef8pJo0UJhc" } }
     },
     "web": {
       "favicon": "./assets/favicon.png"
