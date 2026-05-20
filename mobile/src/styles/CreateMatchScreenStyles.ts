@@ -84,4 +84,17 @@ export const makeStyles = (colors: Colors) => StyleSheet.create({
   },
   submitBtnDisabled: { opacity: 0.6 },
   submitBtnText: { color: '#fff', fontSize: 16, fontWeight: '800', letterSpacing: 0.3 },
+
+  premiumCard: {
+    backgroundColor: colors.bgElevated, borderRadius: 16,
+    padding: 16, borderWidth: 1, borderColor: colors.primary,
+    flexDirection: 'row', alignItems: 'center', gap: 14,
+  },
+  premiumCardLocked: { borderColor: colors.borderSubtle, opacity: 0.7 },
+  premiumIconBox: {
+    width: 44, height: 44, borderRadius: 12,
+    backgroundColor: colors.primaryTint, alignItems: 'center', justifyContent: 'center',
+  },
+  premiumTitleText: { color: colors.text, fontSize: 15, fontWeight: '800' },
+  premiumSubText: { color: colors.textMuted, fontSize: 12, marginTop: 2, lineHeight: 16 },
 });

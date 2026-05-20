@@ -1,18 +1,20 @@
 import React from 'react';
-import { View, Text, TextInput, TouchableOpacity, ScrollView, Alert, ActivityIndicator, StatusBar } from 'react-native';
+import { View, Text, TextInput, TouchableOpacity, ScrollView, Alert, ActivityIndicator, StatusBar, Switch } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { auth } from '../config/firebase';
 import { createMatch } from '../services/matchService';
 import { makeStyles } from '../styles/CreateMatchScreenStyles';
-import { useColors } from '../context/PremiumContext';
+import { useColors, usePremium } from '../context/PremiumContext';
 
 export default function CreateMatchScreen() {
   const navigation = useNavigation<any>();
   const colors = useColors();
   const styles = React.useMemo(() => makeStyles(colors), [colors]);
+  const { isPremium: userIsPremium } = usePremium();
   const [sport, setSport] = React.useState<'futsal' | 'basketball'>('futsal');
+  const [isPremiumMatch, setIsPremiumMatch] = React.useState(false);
   const [locationName, setLocationName] = React.useState('');
   const [lat, setLat] = React.useState('46.5547');
   const [lng, setLng] = React.useState('15.6459');
@@ -47,6 +49,7 @@ export default function CreateMatchScreen() {
         sport, lat: latNum, lng: lngNum, locationName: locationName.trim(),
         datetime, totalSpots,
         createdBy: auth.currentUser?.uid ?? 'anon',
+        isPremium: isPremiumMatch && userIsPremium,
       });
       Alert.alert('Uspeh', 'Tekma ustvarjena!', [{ text: 'OK', onPress: () => navigation.goBack() }]);
     } catch (e: any) {
@@ -168,6 +171,40 @@ export default function CreateMatchScreen() {
                 </View>
               </View>
             </View>
+          </View>
+
+          <View>
+            <Text style={styles.sectionLabel}>Tip tekme</Text>
+            <TouchableOpacity
+              style={[styles.premiumCard, !userIsPremium && styles.premiumCardLocked]}
+              activeOpacity={userIsPremium ? 0.8 : 1}
+              onPress={() => {
+                if (!userIsPremium) {
+                  Alert.alert('Samo za Premium', 'Premium tekme lahko ustvarijo samo Premium uporabniki. Kupi Premium v profilu za 5 €.');
+                  return;
+                }
+                setIsPremiumMatch(v => !v);
+              }}
+            >
+              <View style={styles.premiumIconBox}>
+                <Ionicons name={userIsPremium ? 'star' : 'lock-closed'} size={22} color={colors.primaryLight} />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.premiumTitleText}>Premium tekma</Text>
+                <Text style={styles.premiumSubText}>
+                  {userIsPremium
+                    ? 'V živo točkovanje s potrditvami, ELO in reputacija se spreminjajo'
+                    : 'Na voljo samo Premium uporabnikom (5 €)'}
+                </Text>
+              </View>
+              <Switch
+                value={isPremiumMatch && userIsPremium}
+                onValueChange={v => { if (userIsPremium) setIsPremiumMatch(v); }}
+                disabled={!userIsPremium}
+                trackColor={{ false: colors.border, true: colors.primary }}
+                thumbColor="#fff"
+              />
+            </TouchableOpacity>
           </View>
 
           <View>

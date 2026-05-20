@@ -6,7 +6,8 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { auth } from '../config/firebase';
 import { joinMatch, leaveMatch, subscribeMatch, Match } from '../services/matchService';
 import { makeStyles } from '../styles/MatchDetailsScreenStyles';
-import { useColors } from '../context/PremiumContext';
+import { useColors, usePremium } from '../context/PremiumContext';
+import PremiumMatchPanel from '../components/PremiumMatchPanel';
 
 function formatDate(ts: any): string {
   if (!ts) return '—';
@@ -25,6 +26,7 @@ export default function MatchDetailsScreen() {
   const { matchId, initial } = route.params as { matchId: string; initial?: Match };
   const colors = useColors();
   const styles = React.useMemo(() => makeStyles(colors), [colors]);
+  const { isPremium: userIsPremium } = usePremium();
 
   const [match, setMatch] = React.useState<Match | null>(initial ?? null);
   const [loading, setLoading] = React.useState(!initial);
@@ -53,8 +55,13 @@ export default function MatchDetailsScreen() {
   async function handleJoin() {
     if (!match) return;
     if (matchId === 'test') { Alert.alert('Demo', 'Demo tekma — prijava ni možna.'); return; }
+    if (match?.isPremium && !userIsPremium) {
+      Alert.alert('Samo za Premium', 'Premium tekme so na voljo samo Premium uporabnikom. Kupi Premium v profilu za 5 €.');
+      return;
+    }
     setBusy(true);
     try {
+      await joinMatch(matchId, userId, { userIsPremium });
       const result = await joinMatch(matchId, userId);
       if (result.status === 'waitlisted') {
         Alert.alert('Čakalna vrsta', `Tekma je polna. Dodan si na čakalno vrsto, pozicija #${result.position}.`);
@@ -124,7 +131,15 @@ export default function MatchDetailsScreen() {
           </View>
 
           <View style={styles.heroContent}>
-            <Text style={styles.sportEyebrow}>{sportLabel} · {Math.floor(match.totalSpots / 2)}v{Math.floor(match.totalSpots / 2)}</Text>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+              <Text style={styles.sportEyebrow}>{sportLabel} · {Math.floor(match.totalSpots / 2)}v{Math.floor(match.totalSpots / 2)}</Text>
+              {match.isPremium && (
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: 'rgba(0,0,0,0.28)', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 999 }}>
+                  <Ionicons name="star" size={10} color="#fff" />
+                  <Text style={{ color: '#fff', fontSize: 10, fontWeight: '800', letterSpacing: 0.5 }}>PREMIUM</Text>
+                </View>
+              )}
+            </View>
             <Text style={styles.sportTitle}>Pick-up game</Text>
             <View style={styles.locationRow}>
               <Ionicons name="location" size={14} color="rgba(255,255,255,0.85)" />
@@ -174,6 +189,9 @@ export default function MatchDetailsScreen() {
             </View>
           </View>
 
+          {match.isPremium ? (
+            <PremiumMatchPanel match={match} userId={userId} />
+          ) : (
           <View style={styles.playersCard}>
             <View style={styles.playersHeader}>
               <Text style={styles.playersTitle}>Igralci</Text>
@@ -236,10 +254,31 @@ export default function MatchDetailsScreen() {
               </View>
             )}
           </View>
+          )}
         </View>
       </ScrollView>
 
       <View style={styles.ctaBar}>
+        {match.finalized ? (
+          <View style={styles.fullBtn}>
+            <Text style={styles.fullBtnText}>Tekma končana</Text>
+          </View>
+        ) : isJoined ? (
+          isCreator ? (
+            <View style={styles.fullBtn}>
+              <Text style={styles.fullBtnText}>Ti si ustvarjalec tekme</Text>
+            </View>
+          ) : (
+            <TouchableOpacity style={styles.leaveBtn} onPress={handleLeave} disabled={busy}>
+              {busy ? <ActivityIndicator color={colors.danger} /> : (
+                <>
+                  <Ionicons name="exit-outline" size={20} color={colors.danger} />
+                  <Text style={styles.leaveBtnText}>Odjavi se</Text>
+                </>
+              )}
+            </TouchableOpacity>
+          )
+        ) : isFull ? (
         {isCreator ? (
           <View style={styles.fullBtn}>
             <Text style={styles.fullBtnText}>Ti si ustvarjalec tekme</Text>
