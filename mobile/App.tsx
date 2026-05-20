@@ -1,14 +1,17 @@
 import 'react-native-gesture-handler';
 import React from 'react';
-import { View, Text } from 'react-native';
+import { View, Text, ActivityIndicator } from 'react-native';
 import { NavigationContainer } from '@react-navigation/native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { createStackNavigator } from '@react-navigation/stack';
 import { createDrawerNavigator, DrawerContentScrollView, DrawerItemList } from '@react-navigation/drawer';
 import { Ionicons } from '@expo/vector-icons';
+import { onAuthStateChanged } from 'firebase/auth';
+import { auth } from './src/config/firebase';
 import MapScreen from './src/screens/MapScreen';
 import CreateMatchScreen from './src/screens/CreateMatchScreen';
 import MatchDetailsScreen from './src/screens/MatchDetailsScreen';
+import LoginScreen from './src/screens/LoginScreen';
 import { drawerStyles } from './src/styles/AppStyles';
 
 const Stack = createStackNavigator();
@@ -79,10 +82,24 @@ function MainDrawer() {
 }
 
 export default function App() {
+  const [user, setUser] = React.useState<any>(undefined);
+
+  React.useEffect(() => {
+    return onAuthStateChanged(auth, u => setUser(u));
+  }, []);
+
+  if (user === undefined) {
+    return (
+      <View style={{ flex: 1, backgroundColor: '#0a0e1a', alignItems: 'center', justifyContent: 'center' }}>
+        <ActivityIndicator size="large" color="#3b82f6" />
+      </View>
+    );
+  }
+
   return (
     <SafeAreaProvider>
       <NavigationContainer>
-        <MainDrawer />
+        {user ? <MainDrawer /> : <LoginScreen />}
       </NavigationContainer>
     </SafeAreaProvider>
   );
