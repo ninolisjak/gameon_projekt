@@ -103,15 +103,10 @@ export default function App() {
   }
 
   return (
-    <SafeAreaProvider>
-      <NavigationContainer>
-        {user ? <MainDrawer /> : <LoginScreen />}
-      </NavigationContainer>
-    </SafeAreaProvider>
     <PremiumProvider>
       <SafeAreaProvider>
         <NavigationContainer>
-          <MainDrawer />
+          {user ? <MainDrawer /> : <LoginScreen />}
         </NavigationContainer>
       </SafeAreaProvider>
     </PremiumProvider>
