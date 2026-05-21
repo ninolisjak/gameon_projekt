@@ -278,19 +278,39 @@ export default function MatchDetailsScreen() {
           </View>
         ) : isJoined ? (
           <TouchableOpacity style={styles.leaveBtn} onPress={handleLeave} disabled={busy}>
-            {busy ? <ActivityIndicator color={colors.danger} /> : (<><Ionicons name="exit-outline" size={20} color={colors.danger} /><Text style={styles.leaveBtnText}>Odjavi se</Text></>)}
+            {busy ? <ActivityIndicator color={colors.danger} /> : (
+              <>
+                <Ionicons name="exit-outline" size={20} color={colors.danger} />
+                <Text style={styles.leaveBtnText}>Odjavi se</Text>
+              </>
+            )}
           </TouchableOpacity>
         ) : isWaitlisted ? (
           <TouchableOpacity style={styles.waitlistLeaveBtn} onPress={handleLeaveWaitlist} disabled={busy}>
-            {busy ? <ActivityIndicator color={colors.warning} /> : (<><Ionicons name="close-circle-outline" size={20} color={colors.warning} /><Text style={styles.waitlistLeaveBtnText}>Zapusti čakalno vrsto (#{waitlistPosition})</Text></>)}
+            {busy ? <ActivityIndicator color={colors.warning} /> : (
+              <>
+                <Ionicons name="close-circle-outline" size={20} color={colors.warning} />
+                <Text style={styles.waitlistLeaveBtnText}>Zapusti čakalno vrsto (#{waitlistPosition})</Text>
+              </>
+            )}
           </TouchableOpacity>
         ) : isFull ? (
           <TouchableOpacity style={styles.waitlistBtn} onPress={handleJoin} disabled={busy}>
-            {busy ? <ActivityIndicator color="#fff" /> : (<><Ionicons name="hourglass-outline" size={20} color="#fff" /><Text style={styles.waitlistBtnText}>Pridruži se čakalni vrsti</Text></>)}
+            {busy ? <ActivityIndicator color="#fff" /> : (
+              <>
+                <Ionicons name="hourglass-outline" size={20} color="#fff" />
+                <Text style={styles.waitlistBtnText}>Pridruži se čakalni vrsti</Text>
+              </>
+            )}
           </TouchableOpacity>
         ) : (
           <TouchableOpacity style={styles.joinBtn} onPress={handleJoin} disabled={busy}>
-            {busy ? <ActivityIndicator color="#fff" /> : (<><Ionicons name="checkmark-circle" size={22} color="#fff" /><Text style={styles.joinBtnText}>Prijavi se na tekmo</Text></>)}
+            {busy ? <ActivityIndicator color="#fff" /> : (
+              <>
+                <Ionicons name="checkmark-circle" size={22} color="#fff" />
+                <Text style={styles.joinBtnText}>Prijavi se na tekmo</Text>
+              </>
+            )}
           </TouchableOpacity>
         )}
       </View>

@@ -4,7 +4,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { auth } from '../config/firebase';
-import { createMatch, createPrivateMatch } from '../services/matchService';
+import { createMatch } from '../services/matchService';
 import { makeStyles } from '../styles/CreateMatchScreenStyles';
 import { useColors, usePremium } from '../context/PremiumContext';
 
@@ -15,7 +15,6 @@ export default function CreateMatchScreen() {
   const { isPremium: userIsPremium } = usePremium();
   const [sport, setSport] = React.useState<'futsal' | 'basketball'>('futsal');
   const [isPremiumMatch, setIsPremiumMatch] = React.useState(false);
-  const [isPrivate, setIsPrivate] = React.useState(false);
   const [locationName, setLocationName] = React.useState('');
   const [lat, setLat] = React.useState('46.5547');
   const [lng, setLng] = React.useState('15.6459');
@@ -46,36 +45,15 @@ export default function CreateMatchScreen() {
     }
     setLoading(true);
     try {
-      const payload = { 
-        sport, 
-        lat: latNum, 
-        lng: lngNum, 
-        locationName: locationName.trim(),
-        datetime, 
-        totalSpots,
-        createdBy: auth.currentUser?.uid ?? 'anon'
-      };
-
-      if (isPrivate) {
-        const { inviteCode } = await createPrivateMatch(payload);
-        Alert.alert(
-          'Zasebna tekma ustvarjena!', 
-          `Koda za povabilo: ${inviteCode}\n\nDeli jo s soigralci — le oni bodo videli tekmo.`, 
-          [{ text: 'OK', onPress: () => navigation.goBack() }]
-        );
-      } else {
-        await createMatch({ ...payload, isPremium: isPremiumMatch && userIsPremium });
-        Alert.alert(
-          'Tekma ustvarjena!', 
-          'Javna tekma je bila uspešno objavljena na seznamu.', 
-          [{ text: 'OK', onPress: () => navigation.goBack() }]
-        );
-      }
-    } catch (error: any) {
-      Alert.alert(
-        'Napaka', 
-        error.message || 'Prišlo je do napake pri ustvarjanju tekme.'
-      );
+      await createMatch({
+        sport, lat: latNum, lng: lngNum, locationName: locationName.trim(),
+        datetime, totalSpots,
+        createdBy: auth.currentUser?.uid ?? 'anon',
+        isPremium: isPremiumMatch && userIsPremium,
+      });
+      Alert.alert('Uspeh', 'Tekma ustvarjena!', [{ text: 'OK', onPress: () => navigation.goBack() }]);
+    } catch (e: any) {
+      Alert.alert('Napaka', e.message ?? 'Ustvarjanje ni uspelo.');
     } finally {
       setLoading(false);
     }
@@ -193,20 +171,6 @@ export default function CreateMatchScreen() {
                 </View>
               </View>
             </View>
-          </View>
-
-          <View>
-            <Text style={styles.sectionLabel}>Vidnost</Text>
-            <TouchableOpacity onPress={() => setIsPrivate(v => !v)} activeOpacity={0.85} style={[styles.premiumCard, isPrivate && { borderColor: colors.primary }]}>
-              <View style={[styles.premiumIconBox, { backgroundColor: isPrivate ? colors.primary + '33' : undefined }]}>
-                <Ionicons name={isPrivate ? 'lock-closed' : 'earth'} size={22} color={isPrivate ? colors.primary : colors.textMuted} />
-              </View>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.premiumTitleText}>{isPrivate ? 'Zasebna tekma' : 'Javna tekma'}</Text>
-                <Text style={styles.premiumSubText}>{isPrivate ? 'Vidna samo povabljenim — deli kodo za dostop' : 'Vidna vsem na zemljevidu'}</Text>
-              </View>
-              <Switch value={isPrivate} onValueChange={setIsPrivate} trackColor={{ false: colors.border, true: colors.primary }} thumbColor="#fff" />
-            </TouchableOpacity>
           </View>
 
           <View>

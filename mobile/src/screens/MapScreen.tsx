@@ -43,7 +43,8 @@ function haversineKm(lat1: number, lng1: number, lat2: number, lng2: number): nu
   const toRad = (d: number) => d * Math.PI / 180;
   const dLat = toRad(lat2 - lat1);
   const dLng = toRad(lng2 - lng1);
-  const a = Math.sin(dLat/2)**2 + Math.cos(toRad(lat1))*Math.cos(toRad(lat2))*Math.sin(dLng/2)**2;
+  const a = Math.sin(dLat / 2) ** 2
+    + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2;
   return R * 2 * Math.asin(Math.sqrt(a));
 }
 
@@ -61,23 +62,26 @@ function formatTime(ts: any): string {
 function buildMapHtml(matches: Match[], center: { lat: number; lng: number }, radiusKm: number | null, accentColor = '#3b82f6') {
   const allMarkers = [TEST_MATCH, ...matches];
   const markers = allMarkers.map(m => {
-    const icon = m.sport === 'futsal' ? '⚽' : '🏀';
+    const isFutsal = m.sport === 'futsal';
+    const icon = isFutsal ? '⚽' : '🏀';
     const full = m.filledSpots >= m.totalSpots;
-    const accent = full ? '#ef4444' : '#f5c518';
+    const accent = full ? '#ef4444' : accentColor;
+    const glow = full ? 'rgba(239,68,68,0.45)' : 'rgba(0,0,0,0.45)';
     const html = `
       <div style="position:relative;display:flex;flex-direction:column;align-items:center;cursor:pointer;">
-        <div style="background:linear-gradient(180deg,#1a2540 0%,#131929 100%);
+        <div style="
+          background:linear-gradient(180deg,#1a2540 0%,#131929 100%);
           border:2px solid ${accent};
           border-radius:14px;
           padding:6px 10px 6px 8px;
           display:flex;align-items:center;gap:6px;
           color:#fff;font-size:12px;font-weight:700;
           font-family:-apple-system,Roboto,sans-serif;
-          box-shadow:0 4px 14px rgba(0,0,0,0.45);
+          box-shadow:0 4px 14px ${glow}, 0 2px 4px rgba(0,0,0,0.4);
           white-space:nowrap;
         ">
           <span style="font-size:14px;line-height:1;">${icon}</span>
-          <span>${m.filledSpots}/${m.totalSpots}</span>
+          <span style="letter-spacing:0.3px;">${m.filledSpots}/${m.totalSpots}</span>
         </div>
         <div style="
           width:0;height:0;
@@ -87,16 +91,17 @@ function buildMapHtml(matches: Match[], center: { lat: number; lng: number }, ra
           margin-top:-1px;
           filter:drop-shadow(0 2px 2px rgba(0,0,0,0.3));
         "></div>
-    </div>`;
+      </div>`;
     return `L.marker([${m.location.lat},${m.location.lng}],{icon:L.divIcon({className:'gameon-marker',html:${JSON.stringify(html)},iconSize:[60,40],iconAnchor:[30,40]})}).addTo(map).on('click',()=>window.ReactNativeWebView.postMessage('${m.id}'));`;
   }).join('\n');
 
   const circleJs = radiusKm !== null ? `
     L.circle([${center.lat},${center.lng}],{
-      radius:${radiusKm*1000},
+      radius:${radiusKm * 1000},
       color:'#3b82f6',fillColor:'#3b82f6',
       fillOpacity:0.07,weight:2,dashArray:'8,5'
-    }).addTo(map);L.circleMarker([${center.lat},${center.lng}],{
+    }).addTo(map);
+    L.circleMarker([${center.lat},${center.lng}],{
       radius:5,color:'#3b82f6',fillColor:'#60a5fa',fillOpacity:1,weight:2
     }).addTo(map);
   ` : '';
@@ -136,8 +141,8 @@ export default function MapScreen() {
 
   const visibleMatches = React.useMemo(() => {
     const all = [TEST_MATCH, ...matches];
-    return radius === null 
-      ? all 
+    return radius === null
+      ? all
       : all.filter(m => haversineKm(mapCenter.lat, mapCenter.lng, m.location.lat, m.location.lng) <= radius);
   }, [matches, mapCenter, radius]);
 
@@ -149,38 +154,40 @@ export default function MapScreen() {
   }, [radius, mapCenter]);
 
   const mapHtml = React.useMemo(
-    () => buildMapHtml(visibleMatches, mapCenter, radius), 
-    [visibleMatches, mapCenter, radius]
+    () => buildMapHtml(visibleMatches, mapCenter, radius, colors.primary),
+    [visibleMatches, mapCenter, radius, colors.primary],
   );
 
   async function handleLocate() {
     const { status } = await Location.requestForegroundPermissionsAsync();
-    if (status !== 'granted') { 
-      Alert.alert('Dovoljenje zavrnjeno', 'GameOn potrebuje dostop do lokacije.'); 
-      return; 
+    if (status !== 'granted') {
+      Alert.alert('Dovoljenje zavrnjeno', 'GameOn potrebuje dostop do lokacije za prikaz tekem v bližini.');
+      return;
     }
     try {
       const pos = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
       setMapCenter({ lat: pos.coords.latitude, lng: pos.coords.longitude });
-    } catch { 
-      Alert.alert('Lokacija ni dostopna', 'Preveri ali so lokacijske storitve vklopljene.'); 
+    } catch {
+      Alert.alert('Lokacija ni dostopna', 'Preveri ali so lokacijske storitve vklopljene.');
     }
   }
 
   function handleMessage(e: any) {
-    const m = visibleMatches.find(x => x.id === e.nativeEvent.data);
+    const data = e.nativeEvent.data;
+    const m = visibleMatches.find(x => x.id === data);
     if (m) setSelected(m);
   }
 
-  function openDetails(m: Match) { 
-    navigation.navigate('MatchDetails', { matchId: m.id, initial: m }); 
+  function openDetails(m: Match) {
+    navigation.navigate('MatchDetails', { matchId: m.id, initial: m });
   }
 
 
   return (
     <View style={styles.container}>
       <StatusBar barStyle="light-content" backgroundColor={colors.primary} translucent={false} />
-      
+
+      {/* Map fills the entire screen */}
       <WebView
         source={{ html: mapHtml }}
         style={styles.map}
@@ -189,6 +196,7 @@ export default function MapScreen() {
         originWhitelist={['*']}
       />
 
+      {/* Navbar floats on top — map shows through rounded corners */}
       <SafeAreaView edges={['top']} style={styles.bannerWrap} pointerEvents="box-none">
         <View style={styles.banner}>
           <View style={styles.bannerTopRow}>
@@ -202,8 +210,8 @@ export default function MapScreen() {
               <TouchableOpacity style={styles.bannerIconBtn}>
                 <Ionicons name="notifications-outline" size={20} color="#fff" />
               </TouchableOpacity>
-              <TouchableOpacity 
-                style={styles.bannerIconBtn} 
+              <TouchableOpacity
+                style={styles.bannerIconBtn}
                 onPress={() => navigation.dispatch(DrawerActions.openDrawer())}
               >
                 <Ionicons name="menu" size={22} color="#fff" />
@@ -213,12 +221,12 @@ export default function MapScreen() {
 
           <View style={styles.searchPill}>
             <Ionicons name="search" size={18} color="rgba(255,255,255,0.85)" />
-            <TextInput 
-              style={styles.searchInput} 
-              placeholder="Išči lokacijo..." 
-              placeholderTextColor="rgba(255,255,255,0.65)" 
-              value={search} 
-              onChangeText={setSearch} 
+            <TextInput
+              style={styles.searchInput}
+              placeholder="Išči lokacijo..."
+              placeholderTextColor="rgba(255,255,255,0.65)"
+              value={search}
+              onChangeText={setSearch}
             />
             <Ionicons name="options-outline" size={18} color="rgba(255,255,255,0.85)" />
           </View>
@@ -226,10 +234,10 @@ export default function MapScreen() {
           <View style={styles.radiusRow}>
             <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.radiusScroll}>
               {RADIUS_OPTIONS.map(r => (
-                <TouchableOpacity 
-                  key={String(r)} 
-                  style={[styles.radiusPill, radius === r && styles.radiusPillActive]} 
-                  onPress={() => setRadius(r)} 
+                <TouchableOpacity
+                  key={String(r)}
+                  style={[styles.radiusPill, radius === r && styles.radiusPillActive]}
+                  onPress={() => setRadius(r)}
                   activeOpacity={0.8}
                 >
                   <Text style={[styles.radiusPillText, radius === r && styles.radiusPillTextActive]}>
@@ -237,67 +245,71 @@ export default function MapScreen() {
                   </Text>
                 </TouchableOpacity>
               ))}
-              {radius !== null &&
+              {radius !== null && (
                 <Text style={styles.radiusCount}>
                   {visibleMatches.length} {visibleMatches.length === 1 ? 'tekma' : 'tekem'}
-                </Text>}
+                </Text>
+              )}
             </ScrollView>
           </View>
         </View>
       </SafeAreaView>
 
+      {/* Locate button */}
       <TouchableOpacity style={styles.locationBtn} onPress={handleLocate}>
         <Ionicons name="locate-outline" size={20} color={colors.primaryLight} />
       </TouchableOpacity>
 
+      {/* Match card — only visible after tapping a marker */}
       {selected && (
-        <TouchableOpacity 
-          style={styles.card} 
-          onPress={() => openDetails(selected)} 
+        <TouchableOpacity
+          style={styles.card}
+          onPress={() => openDetails(selected)}
           activeOpacity={0.9}
         >
           <View style={styles.cardHandle} />
-          <TouchableOpacity 
-            style={styles.cardCloseBtn} 
-            onPress={() => setSelected(null)} 
-            hitSlop={{ top:10,bottom:10,left:10,right:10 }}
+          <TouchableOpacity
+            style={styles.cardCloseBtn}
+            onPress={() => setSelected(null)}
+            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
           >
             <Ionicons name="close" size={16} color={colors.textMuted} />
           </TouchableOpacity>
           <View style={styles.cardContent}>
             <View style={styles.cardIconBox}>
-              <Ionicons 
-                name={selected.sport === 'futsal' ? 'football' : 'basketball'} 
-                size={30} 
-                color="#fff" 
+              <Ionicons
+                name={selected.sport === 'futsal' ? 'football' : 'basketball'}
+                size={30}
+                color="#fff"
               />
             </View>
             <View style={styles.cardInfo}>
               <Text style={styles.cardTitle}>
-                {selected.sport === 'futsal' ? 'Futsal' : 'Košarka'} 
-                <Text style={styles.cardVs}>{Math.floor(selected.totalSpots/2)}v{Math.floor(selected.totalSpots/2)}
-                </Text></Text>
-              <View style={{ flexDirection:'row', alignItems:'center', gap:4, marginTop:3 }}>
+                {selected.sport === 'futsal' ? 'Futsal' : 'Košarka'}{' '}
+                <Text style={styles.cardVs}>{Math.floor(selected.totalSpots / 2)}v{Math.floor(selected.totalSpots / 2)}</Text>
+              </Text>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 3 }}>
                 <Ionicons name="location-outline" size={12} color={colors.textMuted} />
                 <Text style={styles.cardLocation} numberOfLines={1}>{selected.location.name}</Text>
               </View>
               <View style={styles.cardMeta}>
                 <Ionicons name="time-outline" size={12} color={colors.textMuted} />
                 <Text style={styles.cardMetaText}>{formatTime(selected.datetime)}</Text>
-                <Ionicons name="people-outline" size={12} color={colors.textMuted} style={{ marginLeft:6 }} />
+                <Ionicons name="people-outline" size={12} color={colors.textMuted} style={{ marginLeft: 6 }} />
                 <Text style={styles.cardMetaText}>{selected.filledSpots}/{selected.totalSpots}</Text>
-                <Ionicons name="navigate-outline" size={12} color={colors.textMuted} style={{ marginLeft:6 }} />
+                <Ionicons name="navigate-outline" size={12} color={colors.textMuted} style={{ marginLeft: 6 }} />
                 <Text style={styles.cardMetaText}>
                   {distanceLabel(mapCenter.lat, mapCenter.lng, selected.location.lat, selected.location.lng)}
                 </Text>
-                {selected.filledSpots >= selected.totalSpots
-                  ? <View style={styles.fullBadge}>
-                      <Text style={styles.fullBadgeText}>POLNO</Text>
-                    </View>
-                  : <View style={styles.openBadge}>
-                      <Text style={styles.openBadgeText}>ODPRTO</Text>
-                    </View>
-                  }
+                {selected.filledSpots >= selected.totalSpots ? (
+                  <View style={styles.fullBadge}>
+                    <Text style={styles.fullBadgeText}>POLNO</Text>
+                  </View>
+                ) : (
+                  <View style={styles.openBadge}>
+                    <Text style={styles.openBadgeText}>ODPRTO</Text>
+                  </View>
+                )}
               </View>
             </View>
             <View style={styles.cardArrow}>
@@ -307,6 +319,7 @@ export default function MapScreen() {
         </TouchableOpacity>
       )}
 
+      {/* Bottom nav floats at the bottom */}
       <View style={styles.bottomNav}>
         <TouchableOpacity style={styles.navItem} activeOpacity={0.7}>
           <View style={styles.navIconWrap}>
@@ -314,16 +327,16 @@ export default function MapScreen() {
           </View>
           <Text style={styles.navLabelActive}>Discover</Text>
         </TouchableOpacity>
-        
+
         <View style={styles.fabWrap}>
           <TouchableOpacity style={styles.fabBtn} onPress={() => navigation.navigate('CreateMatch')} activeOpacity={0.85}>
             <Ionicons name="add" size={28} color="#fff" />
           </TouchableOpacity>
         </View>
 
-        <TouchableOpacity 
-          style={styles.navItem} 
-          activeOpacity={0.7} 
+        <TouchableOpacity
+          style={styles.navItem}
+          activeOpacity={0.7}
           onPress={() => navigation.navigate('Profile')}
         >
           <View style={styles.navIconWrap}>

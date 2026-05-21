@@ -13,7 +13,6 @@ import CreateMatchScreen from './src/screens/CreateMatchScreen';
 import MatchDetailsScreen from './src/screens/MatchDetailsScreen';
 import LoginScreen from './src/screens/LoginScreen';
 import ProfileScreen from './src/screens/ProfileScreen';
-import GroupsScreen from './src/screens/GroupsScreen';
 import { makeDrawerStyles } from './src/styles/AppStyles';
 import { PremiumProvider, useColors } from './src/context/PremiumContext';
 import { ensureUserDoc } from './src/services/matchService';
@@ -52,7 +51,6 @@ function MainStack() {
       <Stack.Screen name="Map" component={MapScreen} />
       <Stack.Screen name="CreateMatch" component={CreateMatchScreen} />
       <Stack.Screen name="MatchDetails" component={MatchDetailsScreen} />
-      <Stack.Screen name="Groups" component={GroupsScreen} />
     </Stack.Navigator>
   );
 }
@@ -77,13 +75,6 @@ function MainDrawer() {
           drawerIcon: ({ color }) => <Ionicons name="person-outline" size={20} color={color} />,
         }}
       />
-      <Drawer.Screen
-        name="Groups"
-        component={GroupsScreen}
-        options={{
-          title: 'Skupine',
-          drawerIcon: ({ color }) => <Ionicons name="people-outline" size={20} color={color} /> }} />
-      
       <Drawer.Screen
         name="Settings"
         component={MapScreen}
