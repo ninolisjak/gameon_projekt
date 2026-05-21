@@ -1,10 +1,11 @@
 import {
-  doc, setDoc, getDoc, onSnapshot, Timestamp,
+  collection, addDoc, Timestamp, doc, updateDoc, setDoc,
+  arrayUnion, arrayRemove, increment, onSnapshot, getDoc,
+  runTransaction, query, where, getDocs 
 } from 'firebase/firestore';
 import { db } from '../config/firebase';
 
-// ─── Types ────────────────────────────────────────────────────────────────────
-
+// ── Types ──────────────────────────────────────────────────────────────────
 export type MatchResult = 'pending' | 'team_a_won' | 'team_b_won' | 'draw';
 
 export type PendingEvent = {
@@ -22,6 +23,47 @@ export type ConfirmedEvent = {
   scorerId: string;
   confirmedBy: string[];
   confirmedAt?: any;
+};
+
+export type RSVP = 'coming' | 'not_coming' | 'maybe';
+
+/* export type RecurringGroup = {
+  id: string;
+  name: string;
+  sport: 'futsal' | 'basketball';
+  location: { lat: number; lng: number; name: string };
+  totalSpots: number;
+  members: string[];
+  createdBy: string;
+  weekday: number;       // 0=ned, 1=pon ... 6=sob
+  timeHHMM: string;      // '18:00'
+  minQuorum: number;     // min players to confirm match
+  inviteCode: string;
+  createdAt?: any;
+}; */
+
+export type RecurringGroup = {
+  id: string;
+  name: string;
+  sport: 'futsal' | 'basketball';
+  location: { lat: number; lng: number; name: string };
+  totalSpots: number;
+  members: string[];
+  createdBy: string;
+  weekday: number;       // 0=ned, 1=pon ... 6=sob
+  timeHHMM: string;      // '18:00'
+  minQuorum: number;     // min players to confirm match
+  inviteCode: string;
+  createdAt?: any;
+};
+
+export type RecurringSlot = {
+  id: string;
+  groupId: string;
+  datetime: any;
+  rsvps: Record<string, RSVP>;
+  status: 'pending' | 'confirmed' | 'cancelled';
+  createdAt?: any;
 };
 
 export type Match = {
@@ -48,6 +90,11 @@ export type Match = {
   attended?: string[];
   result?: MatchResult;
   finalized?: boolean;
+  
+  // Private match fields
+  isPrivate?: boolean;
+  inviteCode?: string;
+  groupId?: string;
 };
 
 export type UserDoc = {
@@ -75,14 +122,23 @@ export function requiredConfirmations(totalSpots: number): number {
   return Math.max(2, Math.ceil(totalSpots / 3));
 }
 
-// ─── In-memory store ──────────────────────────────────────────────────────────
+function genId(): string {
+   return Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
+}
+export type JoinResult =
+  | { status: 'joined' }
+  | { status: 'waitlisted'; position: number };
 
 let store: Match[] = [];
+let groupStore: RecurringGroup[] = [];
+let slotStore: RecurringSlot[] = [];
 const matchListeners = new Map<string, Set<(m: Match | null) => void>>();
 const allListeners = new Set<(ms: Match[]) => void>();
+const slotListeners = new Map<string, Set<(s: RecurringSlot | null) => void>>();
+const groupListeners = new Set<(gs: RecurringGroup[]) => void>();
 
 function getOpen(): Match[] {
-  return store.filter(m => m.isPublic && m.status !== 'closed');
+  return store.filter(m => m.isPublic && !m.isPrivate && m.status !== 'closed');
 }
 
 function notifyMatch(id: string) {
@@ -94,17 +150,18 @@ function notifyAll() {
   allListeners.forEach(fn => fn(getOpen()));
 }
 
+function notifySlot(id: string) { const s = slotStore.find(x => x.id === id) ?? null; slotListeners.get(id)?.forEach(fn => fn(s)); }
+function notifyGroups() { groupListeners.forEach(fn => fn(groupStore)); }
 function syncCapacity(m: Match) {
   m.filledSpots = m.players.length;
   m.status = m.filledSpots >= m.totalSpots ? 'full' : 'open';
 }
 
-function genId(): string {
-  return Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
+function genInviteCode(): string { 
+  return Math.random().toString(36).slice(2, 8).toUpperCase();
 }
 
-// ─── Match operations (in-memory) ─────────────────────────────────────────────
-
+// ── Public match CRUD ──────────────────────────────────────────────────────
 export async function createMatch(data: {
   sport: 'futsal' | 'basketball';
   lat: number;
@@ -114,9 +171,9 @@ export async function createMatch(data: {
   totalSpots: number;
   createdBy: string;
   isPremium?: boolean;
-}): Promise<{ id: string }> {
+}) {
   const id = genId();
-  const base: Match = {
+  const base = {
     id,
     sport: data.sport,
     location: { lat: data.lat, lng: data.lng, name: data.locationName },
@@ -125,36 +182,317 @@ export async function createMatch(data: {
     filledSpots: 1,
     status: data.totalSpots <= 1 ? 'full' : 'open',
     isPublic: true,
+    isPrivate: false,
+    players: [data.createdBy],
+    waitlist: [],
+    createdBy: data.createdBy,
+    createdAt: Timestamp.now(),
+    isPremium: data.isPremium ?? false,
+  };
+
+    if (data.isPremium) {
+    return addDoc(collection(db, 'matches'), {
+      ...base,
+      isPremium: true,
+      teamA: [data.createdBy],
+      teamB: [],
+      scoreA: 0,
+      scoreB: 0,
+      pendingEvents: [],
+      events: [],
+      attended: [],
+      result: 'pending' as MatchResult,
+      finalized: false,
+    });
+}
+  notifyAll();
+  return addDoc(collection(db, 'matches'), { ...base, isPremium: false });
+}
+
+// ── Private match (GAM-11) ─────────────────────────────────────────────────
+export async function createPrivateMatch(data: { 
+/*   sport: 'futsal' | 'basketball'; 
+  lat: number; 
+  lng: number; 
+  locationName: string;
+  datetime: Date; 
+  totalSpots: number; 
+  createdBy: string; 
+}) {
+  const id = genId();
+  const inviteCode = genInviteCode();
+  store.push({
+    id, sport: data.sport,
+    location: { lat: data.lat, lng: data.lng, name: data.locationName },
+    datetime: data.datetime,
+    totalSpots: data.totalSpots,
+    filledSpots: 1,
+    status: data.totalSpots <= 1 ? 'full' : 'open',
+    isPublic: false,
+    isPrivate: true,
+    inviteCode,
     players: [data.createdBy],
     waitlist: [],
     createdBy: data.createdBy,
     createdAt: new Date(),
-    isPremium: !!data.isPremium,
+  });
+  notifyAll();
+  const docRef = await addDoc(collection(db, 'matches'), base);
+  //return { id: docRef.id, inviteCode };
+  return { id, inviteCode }; */
+  sport: 'futsal' | 'basketball';
+  lat: number;
+  lng: number;
+  locationName: string;
+  datetime: Date;
+  totalSpots: number;
+  createdBy: string;
+}) {
+  const inviteCode = genInviteCode();
+  const base = {
+    sport: data.sport,
+    location: { lat: data.lat, lng: data.lng, name: data.locationName },
+    datetime: Timestamp.fromDate(data.datetime),
+    totalSpots: data.totalSpots,
+    filledSpots: 1,
+    status: data.totalSpots <= 1 ? 'full' : 'open',
+    isPublic: false,
+    isPrivate: true,
+    inviteCode,
+    players: [data.createdBy],
+    waitlist: [],
+    createdBy: data.createdBy,
+    createdAt: Timestamp.now(),
+    isPremium: false,
   };
 
-  if (data.isPremium) {
-    base.teamA = [data.createdBy];
-    base.teamB = [];
-    base.scoreA = 0;
-    base.scoreB = 0;
-    base.pendingEvents = [];
-    base.events = [];
-    base.attended = [];
-    base.result = 'pending';
-    base.finalized = false;
-  }
+  const docRef = await addDoc(collection(db, 'matches'), base);
+  return { id: docRef.id, inviteCode };
+}
 
-  store.push(base);
+export async function joinMatchByInviteCode(code: string, userId: string): Promise<{ matchId: string }> {
+  const q = query(collection(db, 'matches'), where('inviteCode', '==', code.toUpperCase()), where('isPrivate', '==', true));
+  const snap = await getDocs(q);
+  if (snap.empty) throw new Error('Povabilo ni veljavno ali je poteklo.');
+
+  const matchDoc = snap.docs[0];
+  const matchId = matchDoc.id;
+  const data = matchDoc.data() as Match;
+
+  if (data.players?.includes(userId)) throw new Error('Že si prijavljen na to tekmo.');
+  if (data.waitlist?.includes(userId)) throw new Error('Že si na čakalni vrsti.');
+
+  const ref = doc(db, 'matches', matchId);
+  await runTransaction(db, async tx => {
+    const txSnap = await tx.get(ref);
+    const txData = txSnap.data() as Match;
+
+    if (txData.filledSpots < txData.totalSpots) {
+      const newFilled = txData.filledSpots + 1;
+      tx.update(ref, {
+        players: arrayUnion(userId),
+        filledSpots: increment(1),
+        status: newFilled >= txData.totalSpots ? 'full' : 'open',
+        isPublic: true // Postane vidna uporabniku po uspešnem sprejemu povabila
+      });
+    } else {
+      tx.update(ref, {
+        waitlist: arrayUnion(userId)
+      });
+    }
+  });
+
+  return { matchId };
+  /*
+  const m = store.find(x => x.inviteCode === code.toUpperCase() && x.isPrivate);
+  if (!m) throw new Error('Povabilo ni veljavno ali je poteklo.');
+  if (m.players.includes(userId)) throw new Error('Že si prijavljen na to tekmo.');
+  m.isPublic = true; // after accepting invite, match is visible to this user
+  m.players = [...m.players, userId];
+  syncCapacity(m);
+  notifyMatch(m.id);
   notifyAll();
-  return { id };
+  return { matchId: m.id };
+  */
+}
+
+export async function getPrivateMatchByInviteCode(code: string): Promise<Match | undefined> {
+  const q = query(collection(db, 'matches'), where('inviteCode', '==', code.toUpperCase()), where('isPrivate', '==', true));
+  const snap = await getDocs(q);
+  if (snap.empty) return undefined;
+  return { id: snap.docs[0].id, ...snap.docs[0].data() } as Match;
+  /*
+  return store.find(x => x.inviteCode === code.toUpperCase() && x.isPrivate);
+  */
+}
+
+// ── Recurring group (GAM-12) ───────────────────────────────────────────────
+export async function createRecurringGroup(data: {
+  name: string;
+  sport: 'futsal' | 'basketball';
+  lat: number;
+  lng: number;
+  locationName: string; 
+  totalSpots: number; 
+  weekday: number; 
+  timeHHMM: string; 
+  minQuorum: number; 
+  createdBy: string; 
+}) {
+  const id = genId();
+  const inviteCode = genInviteCode();
+  const group = {
+    name: data.name, 
+    sport: data.sport,
+    location: { lat: data.lat, lng: data.lng, name: data.locationName },
+    totalSpots: data.totalSpots,
+    members: [data.createdBy],
+    createdBy: data.createdBy, 
+    weekday: data.weekday, 
+    timeHHMM: data.timeHHMM,
+    minQuorum: data.minQuorum, 
+    inviteCode, 
+    createdAt: Timestamp.now(),
+  };
+  
+  const groupRef = await addDoc(collection(db, 'groups'), group);
+  await _generateNextSlot(groupRef.id, group);
+  notifyGroups();
+  return { id: groupRef.id, inviteCode };
+
+
+  /*
+  groupStore.push(group);
+  // Generate next slot automatically
+  _generateNextSlot(group);
+  notifyGroups();
+  return { id, inviteCode };
+  */
+}
+
+export async function joinGroupByInviteCode(code: string, userId: string): Promise<{ groupId: string }> {
+  const q = query(collection(db, 'groups'), where('inviteCode', '==', code.toUpperCase()));
+  const snap = await getDocs(q);
+  if (snap.empty) throw new Error('Povabilo za skupino ni veljavno.');
+
+  const groupDoc = snap.docs[0];
+  const groupId = groupDoc.id;
+  const g = groupDoc.data() as RecurringGroup;
+
+  if (g.members.includes(userId)) throw new Error('Že si član te skupine.');
+
+  const groupRef = doc(db, 'groups', groupId);
+  await updateDoc(groupRef, {
+    members: arrayUnion(userId)
+  });
+
+  // user bo dodan v vse aktivne/termine s statusom 'maybe'
+  const sq = query(collection(db, 'slots'), where('groupId', '==', groupId), where('status', '==', 'pending'));
+  const slotSnap = await getDocs(sq);
+  for (const slotDoc of slotSnap.docs) {
+    const slotRef = doc(db, 'slots', slotDoc.id);
+    await updateDoc(slotRef, {
+      [`rsvps.${userId}`]: 'maybe'
+    });
+  
+  /*const g = groupStore.find(x => x.inviteCode === code.toUpperCase());
+  if (!g) throw new Error('Povabilo za skupino ni veljavno.');
+  if (g.members.includes(userId)) throw new Error('Že si član te skupine.');
+  g.members = [...g.members, userId];
+  // Add user to all pending slots
+  slotStore.filter(s => s.groupId === g.id && s.status === 'pending').forEach(s => {
+    if (!s.rsvps[userId]) s.rsvps[userId] = 'maybe';
+  });
+  notifyGroups();
+  return { groupId: g.id };*/
+  }
+  return { groupId };
+}
+
+async function _generateNextSlot(groupId: string, group: any) {
+  const now = new Date();
+  const target = new Date();
+  const diff = (group.weekday - now.getDay() + 7) % 7 || 7;
+  target.setDate(now.getDate() + diff);
+  const [hh, mm] = group.timeHHMM.split(':').map(Number);
+  target.setHours(hh, mm, 0, 0);
+
+  const rsvps: Record<string, RSVP> = {};
+  group.members.forEach((m: string) => {
+    rsvps[m] = 'maybe';
+  });
+
+  await addDoc(collection(db, 'slots'), {
+    groupId,
+    datetime: Timestamp.fromDate(target),
+    rsvps,
+    status: 'pending',
+    createdAt: Timestamp.now(),
+  });
 }
 
 export async function joinMatch(matchId: string, userId: string, opts?: { userIsPremium?: boolean }): Promise<JoinResult> {
-  const m = store.find(x => x.id === matchId);
-  if (!m) throw new Error('Tekma ne obstaja.');
-  if (m.isPremium && !opts?.userIsPremium) throw new Error('Premium tekme so na voljo samo Premium uporabnikom.');
-  if (m.players.includes(userId)) throw new Error('Že si prijavljen.');
-  if (m.waitlist.includes(userId)) throw new Error('Že si na čakalni vrsti.');
+  const ref = doc(db, 'matches', matchId);
+  return await runTransaction(db, async tx => {
+    const snap = await tx.get(ref);
+    if (!snap.exists()) throw new Error('Tekma ne obstaja.');
+    const data = snap.data() as Match;
+    
+    if (data.isPremium && !opts?.userIsPremium) {
+      throw new Error('Premium tekme so na voljo samo Premium uporabnikom.');
+    }
+    if (data.players?.includes(userId)) throw new Error('Že si prijavljen.');
+    if (data.waitlist?.includes(userId)) throw new Error('Že si na čakalni vrsti.');
+
+    if (data.filledSpots < data.totalSpots) {
+      const newFilled = data.filledSpots + 1;
+      const update: any = {
+        players: arrayUnion(userId),
+        filledSpots: increment(1),
+        status: newFilled >= data.totalSpots ? 'full' : 'open',
+      };
+
+      if (data.isPremium) {
+        const teamA = data.teamA ?? [];
+        const teamB = data.teamB ?? [];
+        const half = Math.floor(data.totalSpots / 2);
+        if (teamA.length <= teamB.length && teamA.length < half) {
+          update.teamA = [...teamA, userId];
+        } else {
+          update.teamB = [...teamB, userId];
+        }
+      }
+
+      tx.update(ref, update);
+      return { status: 'joined' as const };
+    } else {
+      tx.update(ref, {
+        waitlist: arrayUnion(userId)
+      });
+      const currentPosition = (data.waitlist?.length ?? 0) + 1;
+      return { status: 'waitlisted' as const, position: currentPosition };
+    }
+  });
+}
+/*
+export async function joinMatch(matchId: string, userId: string, opts?: { userIsPremium?: boolean }) {
+  const ref = doc(db, 'matches', matchId);
+  await runTransaction(db, async tx => {
+    const snap = await tx.get(ref);
+    if (!snap.exists()) throw new Error('Tekma ne obstaja.');
+    const data = snap.data() as Match;
+    if (data.isPremium && !opts?.userIsPremium) {
+      throw new Error('Premium tekme so na voljo samo Premium uporabnikom.');
+    }
+    if (data.players?.includes(userId)) throw new Error('Že si prijavljen.');
+    if (data.filledSpots >= data.totalSpots) throw new Error('Tekma je polna.');
+
+    const newFilled = data.filledSpots + 1;
+    const update: any = {
+      players: arrayUnion(userId),
+      filledSpots: increment(1),
+      status: newFilled >= data.totalSpots ? 'full' : 'open',
+    };
 
   if (m.filledSpots < m.totalSpots) {
     m.players = [...m.players, userId];
@@ -171,42 +509,219 @@ export async function joinMatch(matchId: string, userId: string, opts?: { userIs
     return { status: 'joined' };
   }
 
+    tx.update(ref, update);
+  });
+}*/
+
+// Join / leave public match 
+/*
+export async function joinMatch(matchId: string, userId: string, _opts?: { userIsPremium?: boolean }): Promise<JoinResult> {
+  const m = store.find(x => x.id === matchId);
+  if (!m) throw new Error('Tekma ne obstaja.');
+  if (m.players.includes(userId)) throw new Error('Že si prijavljen.');
+  if (m.waitlist.includes(userId)) throw new Error('Že si na čakalni vrsti.');
+  
+  if (m.filledSpots < m.totalSpots) {
+    m.players = [...m.players, userId];
+    syncCapacity(m);
+    notifyMatch(matchId);
+    notifyAll();
+    return { status: 'joined' };
+  }
+
   m.waitlist = [...m.waitlist, userId];
   notifyMatch(matchId);
   notifyAll();
   return { status: 'waitlisted', position: m.waitlist.length };
-}
+}*/
 
 export async function leaveMatch(matchId: string, userId: string) {
-  const m = store.find(x => x.id === matchId);
-  if (!m) throw new Error('Tekma ne obstaja.');
-  if (!m.players.includes(userId)) throw new Error('Nisi prijavljen.');
-  if (m.createdBy === userId) throw new Error('Ustvarjalec ne more zapustiti tekme.');
+const ref = doc(db, 'matches', matchId);
+  await runTransaction(db, async tx => {
+    const snap = await tx.get(ref);
+    if (!snap.exists()) throw new Error('Tekma ne obstaja.');
+    const data = snap.data() as Match;
+    if (!data.players?.includes(userId)) throw new Error('Nisi prijavljen.');
+    if (data.createdBy === userId) throw new Error('Ustvarjalec ne more zapustiti tekme.');
 
-  m.players = m.players.filter(p => p !== userId);
-  if (m.isPremium) {
-    m.teamA = (m.teamA ?? []).filter(p => p !== userId);
-    m.teamB = (m.teamB ?? []).filter(p => p !== userId);
-  }
+    let updatedPlayers = (data.players ?? []).filter(p => p !== userId);
+    let updatedWaitlist = [...(data.waitlist ?? [])];
+    let newFilled = data.filledSpots - 1;
 
-  if (m.waitlist.length > 0) {
-    const [next, ...rest] = m.waitlist;
-    m.players = [...m.players, next];
-    m.waitlist = rest;
-  }
+    const update: any = {};
 
-  syncCapacity(m);
-  notifyMatch(matchId);
-  notifyAll();
+    if (updatedWaitlist.length > 0) {
+      const nextPlayer = updatedWaitlist.shift();
+      updatedPlayers.push(nextPlayer!);
+      newFilled += 1;
+      update.waitlist = updatedWaitlist;
+
+      if (data.isPremium) {
+        let teamA = (data.teamA ?? []).filter(p => p !== userId);
+        let teamB = (data.teamB ?? []).filter(p => p !== userId);
+        const half = Math.floor(data.totalSpots / 2);
+        if (teamA.length <= teamB.length && teamA.length < half) {
+          teamA.push(nextPlayer!);
+        } else {
+          teamB.push(nextPlayer!);
+        }
+        update.teamA = teamA;
+        update.teamB = teamB;
+      }
+    } else {
+      if (data.isPremium) {
+        update.teamA = (data.teamA ?? []).filter(p => p !== userId);
+        update.teamB = (data.teamB ?? []).filter(p => p !== userId);
+      }
+    }
+
+    update.players = updatedPlayers;
+    update.filledSpots = newFilled;
+    update.status = newFilled >= data.totalSpots ? 'full' : 'open';
+
+    tx.update(ref, update);
+  });
 }
 
 export async function leaveWaitlist(matchId: string, userId: string) {
-  const m = store.find(x => x.id === matchId);
+  const ref = doc(db, 'matches', matchId);
+    await updateDoc(ref, {
+      waitlist: arrayRemove(userId)
+    });
+
+  /*   const m = store.find(x => x.id === matchId);
   if (!m) throw new Error('Tekma ne obstaja.');
-  if (!m.waitlist.includes(userId)) throw new Error('Nisi na čakalni vrsti.');
+  //if (!m.waitlist.includes(userId)) throw new Error('Nisi na čakalni vrsti.');
   m.waitlist = m.waitlist.filter(p => p !== userId);
   notifyMatch(matchId);
-  notifyAll();
+  notifyAll(); */
+}
+
+
+
+/*
+function _generateNextSlot(group: RecurringGroup): RecurringSlot {
+  const now = new Date();
+  const target = new Date();
+  const diff = (group.weekday - now.getDay() + 7) % 7 || 7;
+  target.setDate(now.getDate() + diff);
+  const [hh, mm] = group.timeHHMM.split(':').map(Number);
+  target.setHours(hh, mm, 0, 0);
+
+  const id = genId();
+  const rsvps: Record<string, RSVP> = {};
+  group.members.forEach(m => { rsvps[m] = 'maybe'; });
+
+  const slot: RecurringSlot = { id, groupId: group.id, datetime: target, rsvps, status: 'pending', createdAt: new Date() };
+  slotStore.push(slot);
+  return slot;
+}*/
+
+export async function rsvpSlot(slotId: string, userId: string, rsvp: RSVP) {
+const slotRef = doc(db, 'slots', slotId);
+
+  await runTransaction(db, async tx => {
+    const slotSnap = await tx.get(slotRef);
+    if (!slotSnap.exists()) throw new Error('Termin ne obstaja.');
+    const slotData = slotSnap.data() as RecurringSlot;
+    if (slotData.status !== 'pending') throw new Error('Termin ni več aktiven.');
+
+    const updatedRsvps = { ...slotData.rsvps, [userId]: rsvp };
+
+    const groupRef = doc(db, 'groups', slotData.groupId);
+    const groupSnap = await tx.get(groupRef);
+    if (!groupSnap.exists()) throw new Error('Skupina ne obstaja.');
+    const groupData = groupSnap.data() as RecurringGroup;
+
+    const coming = Object.values(updatedRsvps).filter(r => r === 'coming').length;
+    const notComing = Object.values(updatedRsvps).filter(r => r === 'not_coming').length;
+    const total = groupData.members.length;
+
+    let newStatus: 'pending' | 'confirmed' | 'cancelled' = 'pending';
+    let triggerNext = false;
+
+    if (coming >= groupData.minQuorum) {
+      newStatus = 'confirmed';
+      triggerNext = true;
+    } else if (notComing > total - groupData.minQuorum) {
+      newStatus = 'cancelled';
+      triggerNext = true;
+    }
+
+    tx.update(slotRef, {
+      rsvps: updatedRsvps,
+      status: newStatus
+    });
+
+    return { triggerNext, groupId: slotData.groupId, groupData };
+  }).then(async result => {
+    if (result && result.triggerNext) {
+      await _generateNextSlot(result.groupId, result.groupData);
+    }
+  });
+}
+
+
+/*
+function _checkQuorum(slot: RecurringSlot) {
+  const group = groupStore.find(g => g.id === slot.groupId);
+  if (!group) return;
+  const coming = Object.values(slot.rsvps).filter(r => r === 'coming').length;
+  const notComing = Object.values(slot.rsvps).filter(r => r === 'not_coming').length;
+  const total = group.members.length;
+
+  if (coming >= group.minQuorum) {
+    slot.status = 'confirmed';
+    notifySlot(slot.id);
+    // Generate next slot for this group
+    _generateNextSlot(group);
+    notifyGroups();
+  } else if (notComing > total - group.minQuorum) {
+    // Not enough people can come → cancel
+    slot.status = 'cancelled';
+    notifySlot(slot.id);
+    _generateNextSlot(group);
+    notifyGroups();
+  }
+}*/
+
+export async function getSlotsForGroup(groupId: string)/* : RecurringGroup[] */ {
+  const q = query(collection(db, 'slots'), where('groupId', '==', groupId));
+  const snap = await getDocs(q);
+  return snap.docs
+    .map(d => ({ id: d.id, ...d.data() } as RecurringSlot))
+    .sort((a, b) => {
+      const dateA = a.datetime?.toDate ? a.datetime.toDate().getTime() : new Date(a.datetime).getTime();
+      const dateB = b.datetime?.toDate ? b.datetime.toDate().getTime() : new Date(b.datetime).getTime();
+      return dateA - dateB;
+    });
+}
+
+export async function getGroupsForUser(userId: string)/*: RecurringGroup[]*/ {
+  const q = query(collection(db, 'groups'), where('members', 'array-contains', userId));
+  const snap = await getDocs(q);
+  return snap.docs.map(d => ({ id: d.id, ...d.data() } as RecurringGroup));
+}
+
+// Premium Features (Firestore)
+export async function swapTeam(matchId: string, userId: string, requesterId: string) {
+  const ref = doc(db, 'matches', matchId);
+  await runTransaction(db, async tx => {
+    const snap = await tx.get(ref);
+    if (!snap.exists()) throw new Error('Tekma ne obstaja.');
+    const data = snap.data() as Match;
+    if (!data.isPremium) throw new Error('Samo Premium tekme imajo ekipe.');
+    if (data.createdBy !== requesterId) throw new Error('Samo gostitelj lahko premika igralce.');
+    if (data.finalized) throw new Error('Tekma je že zaključena.');
+
+    const teamA = data.teamA ?? [];
+    const teamB = data.teamB ?? [];
+    if (teamA.includes(userId)) {
+      tx.update(ref, { teamA: teamA.filter(p => p !== userId), teamB: [...teamB, userId] });
+    } else if (teamB.includes(userId)) {
+      tx.update(ref, { teamB: teamB.filter(p => p !== userId), teamA: [...teamA, userId] });
+    }
+  });
 }
 
 // ─── Premium live-scoring (in-memory) ────────────────────────────────────────
@@ -309,11 +824,13 @@ function eloDelta(playerElo: number, oppTeamAvg: number, actual: number): number
 }
 
 export async function finalizeMatch(matchId: string, requesterId: string) {
-  const m = store.find(x => x.id === matchId);
-  if (!m) throw new Error('Tekma ne obstaja.');
-  if (m.createdBy !== requesterId) throw new Error('Samo gostitelj lahko zaključi tekmo.');
-  if (!m.isPremium) throw new Error('Samo Premium tekme imajo ELO/reputacijo.');
-  if (m.finalized) throw new Error('Tekma je že zaključena.');
+  const ref = doc(db, 'matches', matchId);
+  const snap = await getDoc(ref);
+  if (!snap.exists()) throw new Error('Tekma ne obstaja.');
+  const data = snap.data() as Match;
+  if (data.createdBy !== requesterId) throw new Error('Samo gostitelj lahko zaključi tekmo.');
+  if (!data.isPremium) throw new Error('Samo Premium tekme imajo ELO/reputacijo.');
+  if (data.finalized) throw new Error('Tekma je že zaključena.');
 
   const teamA = m.teamA ?? [];
   const teamB = m.teamB ?? [];
@@ -391,32 +908,66 @@ export async function finalizeMatch(matchId: string, requesterId: string) {
     )
   );
 
-  m.result = result;
-  m.finalized = true;
-  m.status = 'closed';
-  notifyMatch(matchId);
-  notifyAll();
+  await updateDoc(ref, { result, finalized: true, status: 'closed' });
 
   return { result, perPlayer: updates };
+/*   notifyAll();
+  return { id };
+ */
 }
+  
 
-// ─── Subscriptions ────────────────────────────────────────────────────────────
-
+// ── Subscriptions ──────────────────────────────────────────────────────────
 export function subscribeMatch(matchId: string, onData: (m: Match | null) => void, _onError?: (e: Error) => void) {
-  if (!matchListeners.has(matchId)) matchListeners.set(matchId, new Set());
+  if (matchId === 'test') {
+    onData(null);
+    return () => {};
+  }
+  const ref = doc(db, 'matches', matchId);
+  return onSnapshot(ref, snap => {
+    if (!snap.exists()) { onData(null); return; }
+    onData({ id: snap.id, ...snap.data() } as Match);
+  }, err => _onError?.(err));
+/*   if (!matchListeners.has(matchId)) matchListeners.set(matchId, new Set());
   matchListeners.get(matchId)!.add(onData);
   onData(store.find(x => x.id === matchId) ?? null);
-  return () => { matchListeners.get(matchId)?.delete(onData); };
+  return () => { matchListeners.get(matchId)?.delete(onData); }; */
 }
 
 export function subscribeMatches(onData: (ms: Match[]) => void) {
-  allListeners.add(onData);
+  const q = query(collection(db, 'matches'), where('isPublic', '==', true), where('isPrivate', '==', false));
+  return onSnapshot(q, snap => {
+    const matches = snap.docs.map(d => ({ id: d.id, ...d.data() } as Match));
+    onData(matches.filter(m => m.status !== 'closed'));
+  });
+  /*   allListeners.add(onData);
   onData(getOpen());
-  return () => { allListeners.delete(onData); };
+  return () => { allListeners.delete(onData); }; */
 }
 
-// ─── User doc (Firestore) ─────────────────────────────────────────────────────
+export function subscribeSlot(slotId: string, onData: (s: RecurringSlot | null) => void) {
+  const ref = doc(db, 'slots', slotId);
+  return onSnapshot(ref, snap => {
+    if (!snap.exists()) { onData(null); return; }
+    onData({ id: snap.id, ...snap.data() } as RecurringSlot);
+  });
+  /*   if (!slotListeners.has(slotId)) slotListeners.set(slotId, new Set());
+  slotListeners.get(slotId)!.add(onData);
+  onData(slotStore.find(x => x.id === slotId) ?? null);
+  return () => { slotListeners.get(slotId)?.delete(onData); }; */
+}
 
+export function subscribeGroups(userId: string, onData: (gs: RecurringGroup[]) => void) {
+  const q = query(collection(db, 'groups'), where('members', 'array-contains', userId));
+  return onSnapshot(q, snap => {
+    onData(snap.docs.map(d => ({ id: d.id, ...d.data() } as RecurringGroup)));
+  });
+  /* groupListeners.add(onData);
+  onData(getGroupsForUser(userId));
+  return () => { groupListeners.delete(onData); }; */
+}
+
+// ── User docs ──────────────────────────────────────────────────────────────
 export async function ensureUserDoc(uid: string, patch?: Partial<UserDoc>) {
   const ref = doc(db, 'users', uid);
   try {
@@ -432,16 +983,11 @@ export async function ensureUserDoc(uid: string, patch?: Partial<UserDoc>) {
 }
 
 export function subscribeUserDoc(uid: string, onData: (u: UserDoc | null) => void, onError?: (e: Error) => void) {
-  try {
-    const ref = doc(db, 'users', uid);
-    return onSnapshot(ref, snap => {
-      if (!snap.exists()) { onData(null); return; }
-      onData(snap.data() as UserDoc);
-    }, err => onError?.(err as any));
-  } catch {
-    onData(null);
-    return () => {};
-  }
+  const ref = doc(db, 'users', uid);
+  return onSnapshot(ref, snap => {
+    if (!snap.exists()) { onData(null); return; }
+    onData(snap.data() as UserDoc);
+  }, err => onError?.(err));
 }
 
 // ─── Demo seed ────────────────────────────────────────────────────────────────
@@ -462,6 +1008,7 @@ export const DEMO_USERS = ['ana', 'marc', 'luka', 'niko'] as const;
     filledSpots: 2,
     status: 'full',
     isPublic: true,
+    isPrivate: false,
     players: ['ana', 'marc'],
     waitlist: ['luka'],
     createdBy: 'ana',
