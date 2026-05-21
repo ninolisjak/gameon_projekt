@@ -11,21 +11,18 @@ import { makeStyles } from '../styles/PremiumMatchPanelStyles';
 type Props = {
   match: Match;
   userId: string;
+  userNames?: Map<string, string>;
 };
 
-function playerLabel(uid: string, viewerId: string, idx: number): string {
+function resolveName(uid: string, viewerId: string, userNames?: Map<string, string>): string {
   if (uid === viewerId) return 'Ti';
-  return `Igralec ${idx + 1}`;
+  const resolved = userNames?.get(uid);
+  if (resolved) return resolved;
+  if (uid.length <= 10) return uid;
+  return uid.slice(0, 8);
 }
 
-// Friendly name when we don't have a roster index (e.g. for a goal scorer).
-function shortName(uid: string, viewerId: string): string {
-  if (uid === viewerId) return 'Ti';
-  if (uid.length <= 10) return uid;            // demo ids like 'ana', 'marc'
-  return `Igralec ${uid.slice(0, 4)}`;
-}
-
-export default function PremiumMatchPanel({ match, userId }: Props) {
+export default function PremiumMatchPanel({ match, userId, userNames }: Props) {
   const colors = useColors();
   const styles = React.useMemo(() => makeStyles(colors), [colors]);
   const [busy, setBusy] = React.useState(false);
@@ -93,7 +90,7 @@ export default function PremiumMatchPanel({ match, userId }: Props) {
               .map(p => {
                 const sign = p.dElo >= 0 ? '+' : '';
                 const goalNote = p.goals > 0 ? ` (${p.goals}⚽)` : '';
-                return `${shortName(p.uid, userId)}: ${sign}${p.dElo} ELO${goalNote}, ${p.dRep >= 0 ? '+' : ''}${p.dRep} rep`;
+                return `${resolveName(p.uid, userId, userNames)}: ${sign}${p.dElo} ELO${goalNote}, ${p.dRep >= 0 ? '+' : ''}${p.dRep} rep`;
               })
               .join('\n');
             Alert.alert(`Zmagovalec: ${winner}`, lines || 'Ni sprememb.');
@@ -122,7 +119,7 @@ export default function PremiumMatchPanel({ match, userId }: Props) {
   }
 
   function renderTeams() {
-    function renderPlayer(uid: string, idx: number) {
+    function renderPlayer(uid: string, _idx: number) {
       const attended = match.attended?.includes(uid);
       const goals = goalsByPlayer[uid] ?? 0;
       return (
@@ -130,7 +127,7 @@ export default function PremiumMatchPanel({ match, userId }: Props) {
           <View style={styles.teamPlayerAvatar}>
             <Ionicons name="person" size={14} color={colors.primaryLight} />
           </View>
-          <Text style={styles.teamPlayerName} numberOfLines={1}>{playerLabel(uid, userId, idx)}</Text>
+          <Text style={styles.teamPlayerName} numberOfLines={1}>{resolveName(uid, userId, userNames)}</Text>
           {goals > 0 && (
             <Text style={styles.teamPlayerGoals}>⚽ {goals}</Text>
           )}
@@ -226,7 +223,7 @@ export default function PremiumMatchPanel({ match, userId }: Props) {
                   <Text style={{ color: colors.primaryLight, fontWeight: '900' }}>{e.team}</Text>
                 </View>
                 <View style={{ flex: 1 }}>
-                  <Text style={styles.pendingText}>Gol · {shortName(e.scorerId, userId)} (Ekipa {e.team})</Text>
+                  <Text style={styles.pendingText}>Gol · {resolveName(e.scorerId, userId, userNames)} (Ekipa {e.team})</Text>
                   <Text style={styles.pendingSubText}>{e.confirmedBy.length} / {threshold} potrditev</Text>
                 </View>
                 <TouchableOpacity

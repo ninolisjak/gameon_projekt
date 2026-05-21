@@ -89,4 +89,12 @@ export const makeStyles = (colors: Colors) => StyleSheet.create({
 
   cancelLink: { alignSelf: 'center', marginTop: 6, padding: 10 },
   cancelLinkText: { color: colors.textMuted, fontSize: 13, fontWeight: '600' },
+
+  logoutBtn: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8,
+    marginTop: 8, paddingVertical: 14, borderRadius: 14,
+    borderWidth: 1, borderColor: '#ef444440',
+    backgroundColor: '#ef44440d',
+  },
+  logoutBtnText: { color: '#ef4444', fontSize: 15, fontWeight: '700' },
 });

@@ -86,6 +86,8 @@ export type UserDoc = {
   elo: number;
   reputation: number;
   isPremium: boolean;
+  displayName?: string;
+  email?: string;
   updatedAt?: any;
 };
 
@@ -750,6 +752,29 @@ export async function ensureUserDoc(uid: string, patch?: Partial<UserDoc>) {
   } catch (e) {
     console.warn('ensureUserDoc failed (no Firestore?)', e);
   }
+}
+
+export async function resolveUserNames(uids: string[]): Promise<Map<string, string>> {
+  const result = new Map<string, string>();
+  const toFetch = uids.filter(uid => uid.length > 10);
+  uids.filter(uid => uid.length <= 10).forEach(uid => result.set(uid, uid));
+
+  const fetches = await Promise.allSettled(
+    toFetch.map(async uid => {
+      const snap = await getDoc(doc(db, 'users', uid));
+      if (snap.exists()) {
+        const d = snap.data() as UserDoc;
+        const name = d.displayName || (d.email ? d.email.split('@')[0] : null) || uid.slice(0, 8);
+        return { uid, name };
+      }
+      return { uid, name: uid.slice(0, 8) };
+    })
+  );
+
+  for (const r of fetches) {
+    if (r.status === 'fulfilled') result.set(r.value.uid, r.value.name);
+  }
+  return result;
 }
 
 export function subscribeUserDoc(uid: string, onData: (u: UserDoc | null) => void, onError?: (e: Error) => void) {

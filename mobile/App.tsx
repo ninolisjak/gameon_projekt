@@ -93,7 +93,10 @@ export default function App() {
   React.useEffect(() => {
     return onAuthStateChanged(auth, u => {
       setUser(u);
-      if (u) ensureUserDoc(u.uid);
+      if (u) ensureUserDoc(u.uid, {
+        ...(u.email && { email: u.email }),
+        ...(u.displayName && { displayName: u.displayName }),
+      });
     });
   }, []);
 

@@ -4,7 +4,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { auth } from '../config/firebase';
-import { joinMatch, leaveMatch, leaveWaitlist, subscribeMatch, Match, DEMO_USERS } from '../services/matchService';
+import { joinMatch, leaveMatch, leaveWaitlist, subscribeMatch, resolveUserNames, Match, DEMO_USERS } from '../services/matchService';
 import { makeStyles } from '../styles/MatchDetailsScreenStyles';
 import { useColors, usePremium } from '../context/PremiumContext';
 import PremiumMatchPanel from '../components/PremiumMatchPanel';
@@ -32,6 +32,7 @@ export default function MatchDetailsScreen() {
   const [loading, setLoading] = React.useState(!initial);
   const [busy, setBusy] = React.useState(false);
   const [userId, setUserId] = React.useState<string>(auth.currentUser?.uid ?? 'niko');
+  const [userNames, setUserNames] = React.useState<Map<string, string>>(new Map());
 
   React.useEffect(() => {
     const unsub = subscribeMatch(
@@ -41,6 +42,13 @@ export default function MatchDetailsScreen() {
     );
     return unsub;
   }, [matchId]);
+
+  React.useEffect(() => {
+    if (!match) return;
+    const uids = [...new Set([...(match.players ?? []), ...(match.waitlist ?? [])])];
+    if (uids.length === 0) return;
+    resolveUserNames(uids).then(setUserNames);
+  }, [match?.players?.join(','), match?.waitlist?.join(',')]);
 
   const waitlist = match?.waitlist ?? [];
   const isJoined = !!match?.players?.includes(userId);
@@ -199,7 +207,7 @@ export default function MatchDetailsScreen() {
           </View>
 
           {match.isPremium ? (
-            <PremiumMatchPanel match={match} userId={userId} />
+            <PremiumMatchPanel match={match} userId={userId} userNames={userNames} />
           ) : (
           <View style={styles.playersCard}>
             <View style={styles.playersHeader}>
@@ -215,7 +223,9 @@ export default function MatchDetailsScreen() {
                 <View style={styles.playerAvatar}>
                   <Ionicons name="person" size={18} color={colors.primaryLight} />
                 </View>
-                <Text style={styles.playerName} numberOfLines={1}>{p}</Text>
+                <Text style={styles.playerName} numberOfLines={1}>
+                  {userNames.get(p) ?? (p.length <= 10 ? p : p.slice(0, 8))}
+                </Text>
                 {p === userId && (
                   <View style={styles.youBadge}>
                     <Text style={styles.youBadgeText}>TI</Text>
@@ -249,7 +259,9 @@ export default function MatchDetailsScreen() {
                     <View style={styles.waitlistAvatar}>
                       <Ionicons name="hourglass-outline" size={16} color={colors.warning} />
                     </View>
-                    <Text style={styles.playerName} numberOfLines={1}>{p}</Text>
+                    <Text style={styles.playerName} numberOfLines={1}>
+                      {userNames.get(p) ?? (p.length <= 10 ? p : p.slice(0, 8))}
+                    </Text>
                     {p === userId && (
                       <View style={styles.youBadge}>
                         <Text style={styles.youBadgeText}>TI</Text>
