@@ -120,8 +120,13 @@ const allListeners = new Set<(ms: Match[]) => void>();
 const slotListeners = new Map<string, Set<(s: RecurringSlot | null) => void>>();
 const groupListeners = new Set<(gs: RecurringGroup[]) => void>();
 
-function getOpen(): Match[] {
-  return store.filter(m => m.isPublic && !m.isPrivate && m.status !== 'closed');
+function getOpen(currentUserId?: string): Match[] {
+  return store.filter(m => {
+    if (m.status === 'closed') return false;
+    if (!m.isPrivate) return m.isPublic;
+    // Private match: show only to players who are already in it
+    return currentUserId ? m.players.includes(currentUserId) : false;
+  });
 }
 
 function notifyMatch(id: string) {
@@ -716,12 +721,39 @@ export function subscribeMatch(matchId: string, onData: (m: Match | null) => voi
   }, err => _onError?.(err));
 }
 
-export function subscribeMatches(onData: (ms: Match[]) => void) {
-  const q = query(collection(db, 'matches'), where('isPublic', '==', true), where('isPrivate', '==', false));
-  return onSnapshot(q, snap => {
-    const matches = snap.docs.map(d => ({ ...d.data(), id: d.id } as Match));
-    onData(matches.filter(m => m.status !== 'closed'));
+export function subscribeMatches(userId: string, onData: (ms: Match[]) => void) {
+  // Query 1: public matches
+  const publicQ = query(
+    collection(db, 'matches'),
+    where('isPublic', '==', true),
+    where('isPrivate', '==', false)
+  );
+  // Query 2: private matches where user is a player
+  const privateQ = query(
+    collection(db, 'matches'),
+    where('isPrivate', '==', true),
+    where('players', 'array-contains', userId)
+  );
+
+  let publicMatches: Match[] = [];
+  let privateMatches: Match[] = [];
+
+  function emit() {
+    const all = [...publicMatches, ...privateMatches].filter(m => m.status !== 'closed');
+    onData(all);
+  }
+
+  const unsubPublic = onSnapshot(publicQ, snap => {
+    publicMatches = snap.docs.map(d => ({ ...d.data(), id: d.id } as Match));
+    emit();
   });
+
+  const unsubPrivate = onSnapshot(privateQ, snap => {
+    privateMatches = snap.docs.map(d => ({ ...d.data(), id: d.id } as Match));
+    emit();
+  });
+
+  return () => { unsubPublic(); unsubPrivate(); };
 }
 
 export function subscribeSlot(slotId: string, onData: (s: RecurringSlot | null) => void) {
