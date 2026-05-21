@@ -10,6 +10,7 @@ export type MatchResult = 'pending' | 'team_a_won' | 'team_b_won' | 'draw';
 export type PendingEvent = {
   id: string;
   team: 'A' | 'B';
+  scorerId: string;
   proposedBy: string;
   confirmedBy: string[];
   createdAt?: any;
@@ -18,6 +19,7 @@ export type PendingEvent = {
 export type ConfirmedEvent = {
   id: string;
   team: 'A' | 'B';
+  scorerId: string;
   confirmedBy: string[];
   confirmedAt?: any;
 };
@@ -65,8 +67,9 @@ export type JoinResult =
 export const STARTING_ELO = 700;
 export const STARTING_REPUTATION = 50;
 const ELO_K = 32;
-const REP_ATTEND = 2;
-const REP_NO_SHOW = 5;
+const GOAL_ELO_BONUS = 5;   // ELO gained per goal you personally scored
+const REP_ATTEND = 2;       // reputation gained for showing up
+const REP_NO_SHOW = 5;      // reputation lost for not showing up
 
 export function requiredConfirmations(totalSpots: number): number {
   return Math.max(2, Math.ceil(totalSpots / 3));
@@ -235,19 +238,22 @@ export async function swapTeam(matchId: string, userId: string, requesterId: str
   notifyMatch(matchId);
 }
 
-export async function proposeGoal(matchId: string, team: 'A' | 'B', proposerId: string) {
+export async function proposeGoal(matchId: string, scorerId: string, proposerId: string) {
   const m = store.find(x => x.id === matchId);
   if (!m) throw new Error('Tekma ne obstaja.');
   if (!m.isPremium) throw new Error('Samo Premium tekme imajo živo točkovanje.');
   if (m.finalized) throw new Error('Tekma je že zaključena.');
   if (!m.players.includes(proposerId)) throw new Error('Samo prijavljeni igralci lahko predlagajo gol.');
+  if (!m.players.includes(scorerId)) throw new Error('Strelec ni prijavljen na tekmo.');
 
+  const team: 'A' | 'B' = (m.teamA ?? []).includes(scorerId) ? 'A' : 'B';
   const event: PendingEvent = {
-    id: genId(), team, proposedBy: proposerId,
+    id: genId(), team, scorerId, proposedBy: proposerId,
     confirmedBy: [proposerId], createdAt: new Date(),
   };
   m.pendingEvents = [...(m.pendingEvents ?? []), event];
   if (!m.attended) m.attended = [];
+  if (!m.attended.includes(scorerId)) m.attended = [...m.attended, scorerId];
   if (!m.attended.includes(proposerId)) m.attended = [...m.attended, proposerId];
   notifyMatch(matchId);
 }
@@ -273,7 +279,7 @@ export async function confirmGoal(matchId: string, eventId: string, userId: stri
   if (newConfirmedBy.length >= threshold) {
     pending.splice(idx, 1);
     const confirmed: ConfirmedEvent = {
-      id: event.id, team: event.team,
+      id: event.id, team: event.team, scorerId: event.scorerId,
       confirmedBy: newConfirmedBy, confirmedAt: new Date(),
     };
     m.events = [...(m.events ?? []), confirmed];
@@ -341,18 +347,44 @@ export async function finalizeMatch(matchId: string, requesterId: string) {
   const avgB = avg(teamB);
   const actualA = result === 'team_a_won' ? 1 : result === 'draw' ? 0.5 : 0;
 
+  // Count confirmed goals per scorer.
+  const goalsByPlayer = new Map<string, number>();
+  for (const e of (m.events ?? [])) {
+    if (e.scorerId) goalsByPlayer.set(e.scorerId, (goalsByPlayer.get(e.scorerId) ?? 0) + 1);
+  }
+
   const updates = userDocs.map(u => {
     const onA = teamA.includes(u.uid);
     const oppAvg = onA ? avgB : avgA;
     const actual = onA ? actualA : 1 - actualA;
     const hasAttended = attended.includes(u.uid);
-    const dElo = hasAttended ? eloDelta(u.elo, oppAvg, actual) : 0;
+    const goals = goalsByPlayer.get(u.uid) ?? 0;
+
+    // ELO = win/loss outcome (chess formula) + bonus per goal scored. Only counts if you showed up.
+    const resultElo = hasAttended ? eloDelta(u.elo, oppAvg, actual) : 0;
+    const goalElo = hasAttended ? goals * GOAL_ELO_BONUS : 0;
+    const dElo = resultElo + goalElo;
+
+    // Reputation: reward showing up, penalise no-shows.
     const dRep = hasAttended ? REP_ATTEND : -REP_NO_SHOW;
-    return { uid: u.uid, newElo: Math.max(0, u.elo + dElo), newRep: Math.max(0, u.reputation + dRep), dElo, dRep };
+
+    return {
+      uid: u.uid,
+      goals,
+      resultElo,
+      goalElo,
+      dElo,
+      dRep,
+      newElo: Math.max(0, u.elo + dElo),
+      newRep: Math.max(0, u.reputation + dRep),
+    };
   });
 
-  await Promise.all(
-    updates.map(u =>
+  // Write only real user docs (not demo short-ids). Use allSettled so a failed
+  // write for one player doesn't abort the whole finalization.
+  const realUsers = updates.filter(u => !DEMO_USERS.includes(u.uid as any) && u.uid.length > 10);
+  await Promise.allSettled(
+    realUsers.map(u =>
       setDoc(doc(db, 'users', u.uid),
         { uid: u.uid, elo: u.newElo, reputation: u.newRep, updatedAt: Timestamp.now() },
         { merge: true })

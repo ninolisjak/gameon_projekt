@@ -18,6 +18,13 @@ function playerLabel(uid: string, viewerId: string, idx: number): string {
   return `Igralec ${idx + 1}`;
 }
 
+// Friendly name when we don't have a roster index (e.g. for a goal scorer).
+function shortName(uid: string, viewerId: string): string {
+  if (uid === viewerId) return 'Ti';
+  if (uid.length <= 10) return uid;            // demo ids like 'ana', 'marc'
+  return `Igralec ${uid.slice(0, 4)}`;
+}
+
 export default function PremiumMatchPanel({ match, userId }: Props) {
   const colors = useColors();
   const styles = React.useMemo(() => makeStyles(colors), [colors]);
@@ -33,6 +40,15 @@ export default function PremiumMatchPanel({ match, userId }: Props) {
   const pending = match.pendingEvents ?? [];
   const finalized = !!match.finalized;
   const threshold = requiredConfirmations(match.totalSpots);
+  const onTeam = teamA.includes(userId) || teamB.includes(userId);
+
+  const goalsByPlayer = React.useMemo(() => {
+    const map: Record<string, number> = {};
+    for (const e of (match.events ?? [])) {
+      if (e.scorerId) map[e.scorerId] = (map[e.scorerId] ?? 0) + 1;
+    }
+    return map;
+  }, [match.events]);
 
   async function withBusy(fn: () => Promise<void>) {
     if (busy) return;
@@ -42,8 +58,8 @@ export default function PremiumMatchPanel({ match, userId }: Props) {
     finally { setBusy(false); }
   }
 
-  function handleScore(team: 'A' | 'B') {
-    withBusy(() => proposeGoal(match.id, team, userId));
+  function handleScore() {
+    withBusy(() => proposeGoal(match.id, userId, userId));
   }
 
   function handleConfirm(eventId: string) {
@@ -64,16 +80,23 @@ export default function PremiumMatchPanel({ match, userId }: Props) {
 
   function handleFinalize() {
     Alert.alert(
-      'Zaključi tekmo',
-      `Tekma se bo zaključila z rezultatom ${scoreA} - ${scoreB}. ELO in reputacija bosta posodobljena. Nadaljuješ?`,
+      'Končaj tekmo',
+      `Tekma se bo končala z rezultatom ${scoreA} - ${scoreB}. ELO in reputacija bosta posodobljena za vse prisotne igralce. Nadaljuješ?`,
       [
         { text: 'Prekliči', style: 'cancel' },
         {
-          text: 'Zaključi', style: 'destructive',
+          text: 'Končaj tekmo', style: 'destructive',
           onPress: () => withBusy(async () => {
             const res = await finalizeMatch(match.id, userId);
             const winner = res.result === 'team_a_won' ? 'Ekipa A' : res.result === 'team_b_won' ? 'Ekipa B' : 'Neodločeno';
-            Alert.alert('Tekma zaključena', `Zmagovalec: ${winner}`);
+            const lines = res.perPlayer
+              .map(p => {
+                const sign = p.dElo >= 0 ? '+' : '';
+                const goalNote = p.goals > 0 ? ` (${p.goals}⚽)` : '';
+                return `${shortName(p.uid, userId)}: ${sign}${p.dElo} ELO${goalNote}, ${p.dRep >= 0 ? '+' : ''}${p.dRep} rep`;
+              })
+              .join('\n');
+            Alert.alert(`Zmagovalec: ${winner}`, lines || 'Ni sprememb.');
           }),
         },
       ]
@@ -91,7 +114,7 @@ export default function PremiumMatchPanel({ match, userId }: Props) {
           <Text style={styles.resultEyebrow}>Končni rezultat</Text>
           <Text style={{ color: colors.text, fontSize: 56, fontWeight: '900', letterSpacing: -2 }}>{scoreA} - {scoreB}</Text>
           <Text style={styles.resultTitle}>{winnerLabel}</Text>
-          <Text style={styles.resultSub}>ELO in reputacija sta posodobljena za prisotne igralce.</Text>
+          <Text style={styles.resultSub}>ELO razdeljen glede na zmago/poraz in dosežene gole (⚽). Reputacija za prisotnost.</Text>
         </View>
         {renderTeams()}
       </View>
@@ -101,12 +124,16 @@ export default function PremiumMatchPanel({ match, userId }: Props) {
   function renderTeams() {
     function renderPlayer(uid: string, idx: number) {
       const attended = match.attended?.includes(uid);
+      const goals = goalsByPlayer[uid] ?? 0;
       return (
         <View key={uid} style={styles.teamPlayer}>
           <View style={styles.teamPlayerAvatar}>
             <Ionicons name="person" size={14} color={colors.primaryLight} />
           </View>
           <Text style={styles.teamPlayerName} numberOfLines={1}>{playerLabel(uid, userId, idx)}</Text>
+          {goals > 0 && (
+            <Text style={styles.teamPlayerGoals}>⚽ {goals}</Text>
+          )}
           {attended ? (
             <Text style={styles.teamPlayerAttended}>✓</Text>
           ) : null}
@@ -150,25 +177,18 @@ export default function PremiumMatchPanel({ match, userId }: Props) {
           </View>
         </View>
 
-        {isJoined && (
+        {isJoined && onTeam && !finalized && (
           <View style={styles.scoreBtnRow}>
             <TouchableOpacity
               style={[styles.scoreBtn, busy && styles.scoreBtnDisabled]}
-              onPress={() => handleScore('A')}
+              onPress={handleScore}
               disabled={busy}
               activeOpacity={0.85}
             >
-              <Ionicons name="add" size={18} color="#fff" />
-              <Text style={styles.scoreBtnText}>Gol Ekipa A</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={[styles.scoreBtn, busy && styles.scoreBtnDisabled]}
-              onPress={() => handleScore('B')}
-              disabled={busy}
-              activeOpacity={0.85}
-            >
-              <Ionicons name="add" size={18} color="#fff" />
-              <Text style={styles.scoreBtnText}>Gol Ekipa B</Text>
+              <Ionicons name="football" size={18} color="#fff" />
+              <Text style={styles.scoreBtnText}>
+                Zadel sem gol (Ekipa {teamA.includes(userId) ? 'A' : 'B'})
+              </Text>
             </TouchableOpacity>
           </View>
         )}
@@ -206,7 +226,7 @@ export default function PremiumMatchPanel({ match, userId }: Props) {
                   <Text style={{ color: colors.primaryLight, fontWeight: '900' }}>{e.team}</Text>
                 </View>
                 <View style={{ flex: 1 }}>
-                  <Text style={styles.pendingText}>Gol za Ekipo {e.team}</Text>
+                  <Text style={styles.pendingText}>Gol · {shortName(e.scorerId, userId)} (Ekipa {e.team})</Text>
                   <Text style={styles.pendingSubText}>{e.confirmedBy.length} / {threshold} potrditev</Text>
                 </View>
                 <TouchableOpacity
@@ -240,7 +260,7 @@ export default function PremiumMatchPanel({ match, userId }: Props) {
           {busy ? <ActivityIndicator color="#fff" /> : (
             <>
               <Ionicons name="flag" size={18} color="#fff" />
-              <Text style={styles.finalizeBtnText}>Zaključi tekmo in posodobi ELO</Text>
+              <Text style={styles.finalizeBtnText}>Končaj tekmo in razdeli ELO</Text>
             </>
           )}
         </TouchableOpacity>
