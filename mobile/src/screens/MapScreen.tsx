@@ -7,6 +7,7 @@ import { subscribeMatches } from '../services/matchService';
 import { useNavigation, useFocusEffect, DrawerActions } from '@react-navigation/native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { makeStyles } from '../styles/MapScreenStyles';
+import { auth } from '../config/firebase';
 import { useColors } from '../context/PremiumContext';
 
 type Match = {
@@ -123,7 +124,10 @@ export default function MapScreen() {
   const styles = React.useMemo(() => makeStyles(colors), [colors]);
 
   useFocusEffect(
-    React.useCallback(() => subscribeMatches(setMatches), [])
+    React.useCallback(() => {
+      const userId = auth.currentUser?.uid ?? '';
+      return subscribeMatches(userId, setMatches);
+    }, [])
   );
 
   const visibleMatches = React.useMemo(() => {
