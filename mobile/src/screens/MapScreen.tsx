@@ -21,6 +21,7 @@ type Match = {
   players?: string[];
   waitlist?: string[];
   createdBy?: string;
+  isRecurring?: boolean;
 };
 
 const RADIUS_OPTIONS: (number | null)[] = [1, 2, 5, 10, null];
@@ -53,8 +54,8 @@ function buildMapHtml(matches: Match[], center: { lat: number; lng: number }, ra
     const isFutsal = m.sport === 'futsal';
     const icon = isFutsal ? '⚽' : '🏀';
     const full = m.filledSpots >= m.totalSpots;
-    const accent = full ? '#ef4444' : accentColor;
-    const glow = full ? 'rgba(239,68,68,0.45)' : 'rgba(0,0,0,0.45)';
+    const accent = full ? '#ef4444' : m.isRecurring ? '#22c55e' : accentColor;
+    const glow = full ? 'rgba(239,68,68,0.45)' : m.isRecurring ? 'rgba(34,197,94,0.45)' : 'rgba(0,0,0,0.45)';
     const html = `
       <div style="position:relative;display:flex;flex-direction:column;align-items:center;cursor:pointer;">
         <div style="

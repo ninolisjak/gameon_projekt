@@ -145,6 +145,37 @@ export const makeStyles = (colors: Colors) => StyleSheet.create({
 
   loadingWrap: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.bg },
 
+  startBtn: {
+    backgroundColor: '#22c55e', borderRadius: 14,
+    paddingVertical: 16, alignItems: 'center', flexDirection: 'row', justifyContent: 'center', gap: 8,
+    shadowColor: '#22c55e', shadowOpacity: 0.5, shadowRadius: 14, shadowOffset: { width: 0, height: 4 }, elevation: 6,
+  },
+  startBtnText: { color: '#fff', fontSize: 16, fontWeight: '800', letterSpacing: 0.3 },
+
+  consentCard: {
+    backgroundColor: colors.bgElevated, borderRadius: 16,
+    padding: 16, borderWidth: 1, borderColor: colors.borderSubtle,
+  },
+  consentTitle: { color: colors.text, fontSize: 15, fontWeight: '800' },
+  consentPlayerRow: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 7,
+  },
+  consentPlayerName: { color: colors.text, fontSize: 14, fontWeight: '600', flex: 1 },
+  consentBadge: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: 8, borderWidth: 1 },
+  consentBtnRow: { flexDirection: 'row', gap: 10, marginTop: 12 },
+  consentDaBtn: {
+    flex: 1, backgroundColor: '#22c55e',
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6,
+    paddingVertical: 13, borderRadius: 12,
+    shadowColor: '#22c55e', shadowOpacity: 0.4, shadowRadius: 8, shadowOffset: { width: 0, height: 3 }, elevation: 4,
+  },
+  consentNeBtn: {
+    flex: 1, backgroundColor: '#ef444412',
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6,
+    paddingVertical: 13, borderRadius: 12,
+    borderWidth: 1, borderColor: '#ef444450',
+  },
+
   userSwitcherCard: {
     backgroundColor: colors.bgElevated, borderRadius: 16, padding: 14,
     borderWidth: 1, borderColor: colors.warning,

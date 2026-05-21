@@ -79,6 +79,13 @@ export type Match = {
   isPrivate?: boolean;
   inviteCode?: string;
   groupId?: string;
+  // Recurring match
+  isRecurring?: boolean;
+  // Start-consent flow
+  startRequested?: boolean;
+  startConsent?: Record<string, 'yes' | 'no' | 'pending'>;
+  matchStarted?: boolean;
+  cancelReason?: string;
 };
 
 export type UserDoc = {
@@ -88,6 +95,7 @@ export type UserDoc = {
   isPremium: boolean;
   displayName?: string;
   email?: string;
+  expoPushToken?: string;
   updatedAt?: any;
 };
 
@@ -159,6 +167,7 @@ export async function createMatch(data: {
   totalSpots: number;
   createdBy: string;
   isPremium?: boolean;
+  isRecurring?: boolean;
 }) {
   const base = {
     sport: data.sport,
@@ -169,6 +178,7 @@ export async function createMatch(data: {
     status: data.totalSpots <= 1 ? 'full' : 'open',
     isPublic: true,
     isPrivate: false,
+    isRecurring: data.isRecurring ?? false,
     players: [data.createdBy],
     waitlist: [],
     createdBy: data.createdBy,
@@ -706,6 +716,72 @@ export async function finalizeMatch(matchId: string, requesterId: string) {
   await updateDoc(ref, { result, finalized: true, status: 'closed' });
 
   return { result, perPlayer: updates };
+}
+
+// ── Start-consent flow ────────────────────────────────────────────────────────
+
+export async function requestMatchStart(matchId: string, creatorId: string): Promise<string[]> {
+  const ref = doc(db, 'matches', matchId);
+  return runTransaction(db, async tx => {
+    const snap = await tx.get(ref);
+    if (!snap.exists()) throw new Error('Tekma ne obstaja.');
+    const data = snap.data() as Match;
+    if (data.createdBy !== creatorId) throw new Error('Samo gostitelj lahko začne tekmo.');
+    if (data.matchStarted) throw new Error('Tekma je že začeta.');
+    if (data.startRequested) throw new Error('Začetek je že bil zahtevan.');
+
+    const players = data.players ?? [];
+    const consent: Record<string, 'yes' | 'no' | 'pending'> = {};
+    players.forEach(p => { consent[p] = 'pending'; });
+
+    tx.update(ref, { startRequested: true, startConsent: consent });
+    return players;
+  });
+}
+
+export async function respondToMatchStart(matchId: string, userId: string, response: 'yes' | 'no') {
+  const ref = doc(db, 'matches', matchId);
+  await runTransaction(db, async tx => {
+    const snap = await tx.get(ref);
+    if (!snap.exists()) throw new Error('Tekma ne obstaja.');
+    const data = snap.data() as Match;
+    if (!data.startRequested) return;
+
+    const newConsent = { ...(data.startConsent ?? {}), [userId]: response };
+
+    if (response === 'no') {
+      tx.update(ref, { startRequested: false, startConsent: {} });
+    } else {
+      const players = data.players ?? [];
+      const allAgreed = players.every(p => newConsent[p] === 'yes');
+      if (allAgreed) {
+        tx.update(ref, { startConsent: newConsent, matchStarted: true, startRequested: false });
+      } else {
+        tx.update(ref, { startConsent: newConsent });
+      }
+    }
+  });
+}
+
+export async function getPlayerPushTokens(uids: string[]): Promise<string[]> {
+  const results = await Promise.allSettled(
+    uids.map(async uid => {
+      const snap = await getDoc(doc(db, 'users', uid));
+      if (snap.exists()) {
+        const d = snap.data() as UserDoc;
+        return d.expoPushToken ?? null;
+      }
+      return null;
+    })
+  );
+  return results
+    .filter((r): r is PromiseFulfilledResult<string> => r.status === 'fulfilled' && r.value !== null)
+    .map(r => r.value);
+}
+
+export async function cancelMatchLowAttendance(matchId: string) {
+  const ref = doc(db, 'matches', matchId);
+  await updateDoc(ref, { status: 'closed', cancelReason: 'low_attendance' });
 }
 
 // ── Subscriptions ──────────────────────────────────────────────────────────

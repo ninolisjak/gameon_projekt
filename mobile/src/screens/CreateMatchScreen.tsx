@@ -16,6 +16,7 @@ export default function CreateMatchScreen() {
   const [sport, setSport] = React.useState<'futsal' | 'basketball'>('futsal');
   const [isPremiumMatch, setIsPremiumMatch] = React.useState(false);
   const [isPrivate, setIsPrivate] = React.useState(false);
+  const [isRecurring, setIsRecurring] = React.useState(false);
   const [locationName, setLocationName] = React.useState('');
   const [lat, setLat] = React.useState('46.5547');
   const [lng, setLng] = React.useState('15.6459');
@@ -64,7 +65,7 @@ export default function CreateMatchScreen() {
           [{ text: 'OK', onPress: () => navigation.goBack() }]
         );
       } else {
-        await createMatch({ ...payload, isPremium: isPremiumMatch && userIsPremium });
+        await createMatch({ ...payload, isPremium: isPremiumMatch && userIsPremium, isRecurring });
         Alert.alert(
           'Tekma ustvarjena!', 
           'Javna tekma je bila uspešno objavljena na seznamu.', 
@@ -206,6 +207,20 @@ export default function CreateMatchScreen() {
                 <Text style={styles.premiumSubText}>{isPrivate ? 'Vidna samo povabljenim — deli kodo za dostop' : 'Vidna vsem na zemljevidu'}</Text>
               </View>
               <Switch value={isPrivate} onValueChange={setIsPrivate} trackColor={{ false: colors.border, true: colors.primary }} thumbColor="#fff" />
+            </TouchableOpacity>
+          </View>
+
+          <View>
+            <Text style={styles.sectionLabel}>Ponavljanje</Text>
+            <TouchableOpacity onPress={() => setIsRecurring(v => !v)} activeOpacity={0.85} style={[styles.premiumCard, isRecurring && { borderColor: '#22c55e' }]}>
+              <View style={[styles.premiumIconBox, { backgroundColor: isRecurring ? '#22c55e33' : undefined }]}>
+                <Ionicons name="repeat" size={22} color={isRecurring ? '#22c55e' : colors.textMuted} />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.premiumTitleText}>{isRecurring ? 'Ponavljajoča tekma' : 'Enkratna tekma'}</Text>
+                <Text style={styles.premiumSubText}>{isRecurring ? 'Prikazana zeleno na zemljevidu — redna terminska tekma' : 'Navadna enkratna tekma'}</Text>
+              </View>
+              <Switch value={isRecurring} onValueChange={setIsRecurring} trackColor={{ false: colors.border, true: '#22c55e' }} thumbColor="#fff" />
             </TouchableOpacity>
           </View>
 
