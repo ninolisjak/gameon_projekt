@@ -89,6 +89,7 @@ export const makeStyles = (colors: Colors) => StyleSheet.create({
   teamPlayerName: { color: colors.text, fontSize: 12, fontWeight: '600', flex: 1 },
   teamPlayerNoShow: { color: colors.danger, fontSize: 10, fontWeight: '800' },
   teamPlayerAttended: { color: colors.success, fontSize: 10, fontWeight: '800' },
+  teamPlayerGoals: { color: colors.primaryLight, fontSize: 11, fontWeight: '800', marginRight: 4 },
   teamSwapBtn: { padding: 4 },
 
   finalizeBtn: {
