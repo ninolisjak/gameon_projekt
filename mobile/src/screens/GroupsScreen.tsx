@@ -101,7 +101,7 @@ React.useEffect(() => {
   }
 
   const bg = colors.bg ?? '#0a0e1a';
-  const card = colors.bgCard ?? '#131929';
+  const card = colors.bgElevated ?? '#131929';
   const border = colors.border ?? '#2a3550';
   const primary = colors.primary ?? '#f5c518';
   const textMain = colors.text ?? '#fff';
