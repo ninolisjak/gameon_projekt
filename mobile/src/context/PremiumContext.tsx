@@ -1,4 +1,5 @@
 import React from 'react';
+import { onAuthStateChanged } from 'firebase/auth';
 import { Colors, getColors } from '../styles/theme';
 import { auth } from '../config/firebase';
 import {
@@ -23,16 +24,20 @@ export function PremiumProvider({ children }: { children: React.ReactNode }) {
   const [isPremium, setIsPremium] = React.useState(false);
   const [userDoc, setUserDoc] = React.useState<UserDoc | null>(null);
 
-  // Watch the current user's doc so ELO/reputation/Premium flag stay in sync
-  // with whatever the match service writes.
+  // Watch auth state so the Firestore subscription always targets the current user.
   React.useEffect(() => {
-    const uid = auth.currentUser?.uid;
-    if (!uid) return;
-    const unsub = subscribeUserDoc(uid, doc => {
-      setUserDoc(doc);
-      if (doc) setIsPremium(!!doc.isPremium);
+    let unsubDoc: (() => void) | undefined;
+
+    const unsubAuth = onAuthStateChanged(auth, user => {
+      if (unsubDoc) { unsubDoc(); unsubDoc = undefined; }
+      if (!user) { setUserDoc(null); setIsPremium(false); return; }
+      unsubDoc = subscribeUserDoc(user.uid, d => {
+        setUserDoc(d);
+        if (d) setIsPremium(!!d.isPremium);
+      });
     });
-    return unsub;
+
+    return () => { unsubAuth(); if (unsubDoc) unsubDoc(); };
   }, []);
 
   const buyPremium = React.useCallback(async () => {

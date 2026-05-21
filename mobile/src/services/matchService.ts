@@ -1,5 +1,6 @@
 import {
   doc, setDoc, getDoc, onSnapshot, Timestamp,
+  collection, addDoc, runTransaction, query, where,
 } from 'firebase/firestore';
 import { db } from '../config/firebase';
 
@@ -55,6 +56,8 @@ export type UserDoc = {
   elo: number;
   reputation: number;
   isPremium: boolean;
+  displayName?: string;
+  email?: string;
   updatedAt?: any;
 };
 
@@ -67,43 +70,19 @@ export type JoinResult =
 export const STARTING_ELO = 700;
 export const STARTING_REPUTATION = 50;
 const ELO_K = 32;
-const GOAL_ELO_BONUS = 5;   // ELO gained per goal you personally scored
-const REP_ATTEND = 2;       // reputation gained for showing up
-const REP_NO_SHOW = 5;      // reputation lost for not showing up
+const GOAL_ELO_BONUS = 5;
+const REP_ATTEND = 2;
+const REP_NO_SHOW = 5;
 
 export function requiredConfirmations(totalSpots: number): number {
   return Math.max(2, Math.ceil(totalSpots / 3));
-}
-
-// ─── In-memory store ──────────────────────────────────────────────────────────
-
-let store: Match[] = [];
-const matchListeners = new Map<string, Set<(m: Match | null) => void>>();
-const allListeners = new Set<(ms: Match[]) => void>();
-
-function getOpen(): Match[] {
-  return store.filter(m => m.isPublic && m.status !== 'closed');
-}
-
-function notifyMatch(id: string) {
-  const m = store.find(x => x.id === id) ?? null;
-  matchListeners.get(id)?.forEach(fn => fn(m));
-}
-
-function notifyAll() {
-  allListeners.forEach(fn => fn(getOpen()));
-}
-
-function syncCapacity(m: Match) {
-  m.filledSpots = m.players.length;
-  m.status = m.filledSpots >= m.totalSpots ? 'full' : 'open';
 }
 
 function genId(): string {
   return Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
 }
 
-// ─── Match operations (in-memory) ─────────────────────────────────────────────
+// ─── Match operations (Firestore) ─────────────────────────────────────────────
 
 export async function createMatch(data: {
   sport: 'futsal' | 'basketball';
@@ -115,12 +94,10 @@ export async function createMatch(data: {
   createdBy: string;
   isPremium?: boolean;
 }): Promise<{ id: string }> {
-  const id = genId();
-  const base: Match = {
-    id,
+  const base: any = {
     sport: data.sport,
     location: { lat: data.lat, lng: data.lng, name: data.locationName },
-    datetime: data.datetime,
+    datetime: Timestamp.fromDate(data.datetime),
     totalSpots: data.totalSpots,
     filledSpots: 1,
     status: data.totalSpots <= 1 ? 'full' : 'open',
@@ -128,7 +105,7 @@ export async function createMatch(data: {
     players: [data.createdBy],
     waitlist: [],
     createdBy: data.createdBy,
-    createdAt: new Date(),
+    createdAt: Timestamp.now(),
     isPremium: !!data.isPremium,
   };
 
@@ -144,161 +121,211 @@ export async function createMatch(data: {
     base.finalized = false;
   }
 
-  store.push(base);
-  notifyAll();
-  return { id };
+  const ref = await addDoc(collection(db, 'matches'), base);
+  return { id: ref.id };
 }
 
 export async function joinMatch(matchId: string, userId: string, opts?: { userIsPremium?: boolean }): Promise<JoinResult> {
-  const m = store.find(x => x.id === matchId);
-  if (!m) throw new Error('Tekma ne obstaja.');
-  if (m.isPremium && !opts?.userIsPremium) throw new Error('Premium tekme so na voljo samo Premium uporabnikom.');
-  if (m.players.includes(userId)) throw new Error('Že si prijavljen.');
-  if (m.waitlist.includes(userId)) throw new Error('Že si na čakalni vrsti.');
+  const ref = doc(db, 'matches', matchId);
+  return runTransaction(db, async tx => {
+    const snap = await tx.get(ref);
+    if (!snap.exists()) throw new Error('Tekma ne obstaja.');
+    const m = snap.data() as Omit<Match, 'id'>;
+    if (m.isPremium && !opts?.userIsPremium) throw new Error('Premium tekme so na voljo samo Premium uporabnikom.');
+    if (m.players.includes(userId)) throw new Error('Že si prijavljen.');
+    if ((m.waitlist ?? []).includes(userId)) throw new Error('Že si na čakalni vrsti.');
 
-  if (m.filledSpots < m.totalSpots) {
-    m.players = [...m.players, userId];
-    if (m.isPremium) {
-      const half = Math.floor(m.totalSpots / 2);
-      const teamA = m.teamA ?? [];
-      const teamB = m.teamB ?? [];
-      if (teamA.length <= teamB.length && teamA.length < half) m.teamA = [...teamA, userId];
-      else m.teamB = [...(m.teamB ?? []), userId];
+    if (m.filledSpots < m.totalSpots) {
+      const players = [...m.players, userId];
+      const filledSpots = players.length;
+      const status: 'open' | 'full' = filledSpots >= m.totalSpots ? 'full' : 'open';
+      const update: any = { players, filledSpots, status };
+
+      if (m.isPremium) {
+        const half = Math.floor(m.totalSpots / 2);
+        const teamA = m.teamA ?? [];
+        const teamB = m.teamB ?? [];
+        if (teamA.length <= teamB.length && teamA.length < half) {
+          update.teamA = [...teamA, userId];
+        } else {
+          update.teamB = [...(m.teamB ?? []), userId];
+        }
+      }
+
+      tx.update(ref, update);
+      return { status: 'joined' as const };
     }
-    syncCapacity(m);
-    notifyMatch(matchId);
-    notifyAll();
-    return { status: 'joined' };
-  }
 
-  m.waitlist = [...m.waitlist, userId];
-  notifyMatch(matchId);
-  notifyAll();
-  return { status: 'waitlisted', position: m.waitlist.length };
+    const waitlist = [...(m.waitlist ?? []), userId];
+    tx.update(ref, { waitlist });
+    return { status: 'waitlisted' as const, position: waitlist.length };
+  });
 }
 
 export async function leaveMatch(matchId: string, userId: string) {
-  const m = store.find(x => x.id === matchId);
-  if (!m) throw new Error('Tekma ne obstaja.');
-  if (!m.players.includes(userId)) throw new Error('Nisi prijavljen.');
-  if (m.createdBy === userId) throw new Error('Ustvarjalec ne more zapustiti tekme.');
+  const ref = doc(db, 'matches', matchId);
+  return runTransaction(db, async tx => {
+    const snap = await tx.get(ref);
+    if (!snap.exists()) throw new Error('Tekma ne obstaja.');
+    const m = snap.data() as Omit<Match, 'id'>;
+    if (!m.players.includes(userId)) throw new Error('Nisi prijavljen.');
+    if (m.createdBy === userId) throw new Error('Ustvarjalec ne more zapustiti tekme.');
 
-  m.players = m.players.filter(p => p !== userId);
-  if (m.isPremium) {
-    m.teamA = (m.teamA ?? []).filter(p => p !== userId);
-    m.teamB = (m.teamB ?? []).filter(p => p !== userId);
-  }
+    let players = m.players.filter(p => p !== userId);
+    const update: any = {};
 
-  if (m.waitlist.length > 0) {
-    const [next, ...rest] = m.waitlist;
-    m.players = [...m.players, next];
-    m.waitlist = rest;
-  }
+    if (m.isPremium) {
+      update.teamA = (m.teamA ?? []).filter(p => p !== userId);
+      update.teamB = (m.teamB ?? []).filter(p => p !== userId);
+    }
 
-  syncCapacity(m);
-  notifyMatch(matchId);
-  notifyAll();
+    const waitlist = [...(m.waitlist ?? [])];
+    if (waitlist.length > 0) {
+      const [next, ...rest] = waitlist;
+      players = [...players, next];
+      update.waitlist = rest;
+      if (m.isPremium) {
+        const teamA = update.teamA ?? (m.teamA ?? []).filter((p: string) => p !== userId);
+        const teamB = update.teamB ?? (m.teamB ?? []).filter((p: string) => p !== userId);
+        const half = Math.floor(m.totalSpots / 2);
+        if (teamA.length <= teamB.length && teamA.length < half) {
+          update.teamA = [...teamA, next];
+        } else {
+          update.teamB = [...teamB, next];
+        }
+      }
+    } else {
+      update.waitlist = [];
+    }
+
+    const filledSpots = players.length;
+    const status: 'open' | 'full' = filledSpots >= m.totalSpots ? 'full' : 'open';
+    tx.update(ref, { players, filledSpots, status, ...update });
+  });
 }
 
 export async function leaveWaitlist(matchId: string, userId: string) {
-  const m = store.find(x => x.id === matchId);
-  if (!m) throw new Error('Tekma ne obstaja.');
-  if (!m.waitlist.includes(userId)) throw new Error('Nisi na čakalni vrsti.');
-  m.waitlist = m.waitlist.filter(p => p !== userId);
-  notifyMatch(matchId);
-  notifyAll();
+  const ref = doc(db, 'matches', matchId);
+  return runTransaction(db, async tx => {
+    const snap = await tx.get(ref);
+    if (!snap.exists()) throw new Error('Tekma ne obstaja.');
+    const m = snap.data() as Omit<Match, 'id'>;
+    if (!(m.waitlist ?? []).includes(userId)) throw new Error('Nisi na čakalni vrsti.');
+    tx.update(ref, { waitlist: (m.waitlist ?? []).filter(p => p !== userId) });
+  });
 }
 
-// ─── Premium live-scoring (in-memory) ────────────────────────────────────────
+// ─── Premium live-scoring (Firestore) ─────────────────────────────────────────
 
 export async function checkIn(matchId: string, userId: string) {
-  const m = store.find(x => x.id === matchId);
-  if (!m) throw new Error('Tekma ne obstaja.');
-  if (!m.attended) m.attended = [];
-  if (!m.attended.includes(userId)) m.attended = [...m.attended, userId];
-  notifyMatch(matchId);
+  const ref = doc(db, 'matches', matchId);
+  return runTransaction(db, async tx => {
+    const snap = await tx.get(ref);
+    if (!snap.exists()) throw new Error('Tekma ne obstaja.');
+    const m = snap.data() as Omit<Match, 'id'>;
+    const attended = m.attended ?? [];
+    if (!attended.includes(userId)) {
+      tx.update(ref, { attended: [...attended, userId] });
+    }
+  });
 }
 
 export async function swapTeam(matchId: string, userId: string, requesterId: string) {
-  const m = store.find(x => x.id === matchId);
-  if (!m) throw new Error('Tekma ne obstaja.');
-  if (!m.isPremium) throw new Error('Samo Premium tekme imajo ekipe.');
-  if (m.createdBy !== requesterId) throw new Error('Samo gostitelj lahko premika igralce.');
-  if (m.finalized) throw new Error('Tekma je že zaključena.');
+  const ref = doc(db, 'matches', matchId);
+  return runTransaction(db, async tx => {
+    const snap = await tx.get(ref);
+    if (!snap.exists()) throw new Error('Tekma ne obstaja.');
+    const m = snap.data() as Omit<Match, 'id'>;
+    if (!m.isPremium) throw new Error('Samo Premium tekme imajo ekipe.');
+    if (m.createdBy !== requesterId) throw new Error('Samo gostitelj lahko premika igralce.');
+    if (m.finalized) throw new Error('Tekma je že zaključena.');
 
-  const teamA = m.teamA ?? [];
-  const teamB = m.teamB ?? [];
-  if (teamA.includes(userId)) {
-    m.teamA = teamA.filter(p => p !== userId);
-    m.teamB = [...teamB, userId];
-  } else if (teamB.includes(userId)) {
-    m.teamB = teamB.filter(p => p !== userId);
-    m.teamA = [...teamA, userId];
-  }
-  notifyMatch(matchId);
+    const teamA = m.teamA ?? [];
+    const teamB = m.teamB ?? [];
+    if (teamA.includes(userId)) {
+      tx.update(ref, { teamA: teamA.filter(p => p !== userId), teamB: [...teamB, userId] });
+    } else if (teamB.includes(userId)) {
+      tx.update(ref, { teamA: [...teamA, userId], teamB: teamB.filter(p => p !== userId) });
+    }
+  });
 }
 
 export async function proposeGoal(matchId: string, scorerId: string, proposerId: string) {
-  const m = store.find(x => x.id === matchId);
-  if (!m) throw new Error('Tekma ne obstaja.');
-  if (!m.isPremium) throw new Error('Samo Premium tekme imajo živo točkovanje.');
-  if (m.finalized) throw new Error('Tekma je že zaključena.');
-  if (!m.players.includes(proposerId)) throw new Error('Samo prijavljeni igralci lahko predlagajo gol.');
-  if (!m.players.includes(scorerId)) throw new Error('Strelec ni prijavljen na tekmo.');
+  const ref = doc(db, 'matches', matchId);
+  return runTransaction(db, async tx => {
+    const snap = await tx.get(ref);
+    if (!snap.exists()) throw new Error('Tekma ne obstaja.');
+    const m = snap.data() as Omit<Match, 'id'>;
+    if (!m.isPremium) throw new Error('Samo Premium tekme imajo živo točkovanje.');
+    if (m.finalized) throw new Error('Tekma je že zaključena.');
+    if (!m.players.includes(proposerId)) throw new Error('Samo prijavljeni igralci lahko predlagajo gol.');
+    if (!m.players.includes(scorerId)) throw new Error('Strelec ni prijavljen na tekmo.');
 
-  const team: 'A' | 'B' = (m.teamA ?? []).includes(scorerId) ? 'A' : 'B';
-  const event: PendingEvent = {
-    id: genId(), team, scorerId, proposedBy: proposerId,
-    confirmedBy: [proposerId], createdAt: new Date(),
-  };
-  m.pendingEvents = [...(m.pendingEvents ?? []), event];
-  if (!m.attended) m.attended = [];
-  if (!m.attended.includes(scorerId)) m.attended = [...m.attended, scorerId];
-  if (!m.attended.includes(proposerId)) m.attended = [...m.attended, proposerId];
-  notifyMatch(matchId);
+    const team: 'A' | 'B' = (m.teamA ?? []).includes(scorerId) ? 'A' : 'B';
+    const event: PendingEvent = {
+      id: genId(), team, scorerId, proposedBy: proposerId,
+      confirmedBy: [proposerId], createdAt: Timestamp.now(),
+    };
+
+    const attended = [...(m.attended ?? [])];
+    if (!attended.includes(scorerId)) attended.push(scorerId);
+    if (!attended.includes(proposerId)) attended.push(proposerId);
+
+    tx.update(ref, { pendingEvents: [...(m.pendingEvents ?? []), event], attended });
+  });
 }
 
 export async function confirmGoal(matchId: string, eventId: string, userId: string) {
-  const m = store.find(x => x.id === matchId);
-  if (!m) throw new Error('Tekma ne obstaja.');
-  if (!m.isPremium) throw new Error('Samo Premium tekme.');
-  if (m.finalized) throw new Error('Tekma je že zaključena.');
-  if (!m.players.includes(userId)) throw new Error('Samo prijavljeni igralci lahko potrdijo gol.');
+  const ref = doc(db, 'matches', matchId);
+  return runTransaction(db, async tx => {
+    const snap = await tx.get(ref);
+    if (!snap.exists()) throw new Error('Tekma ne obstaja.');
+    const m = snap.data() as Omit<Match, 'id'>;
+    if (!m.isPremium) throw new Error('Samo Premium tekme.');
+    if (m.finalized) throw new Error('Tekma je že zaključena.');
+    if (!m.players.includes(userId)) throw new Error('Samo prijavljeni igralci lahko potrdijo gol.');
 
-  const pending = [...(m.pendingEvents ?? [])];
-  const idx = pending.findIndex(e => e.id === eventId);
-  if (idx === -1) throw new Error('Dogodek ne obstaja.');
-  const event = pending[idx];
-  if (event.confirmedBy.includes(userId)) throw new Error('Že si potrdil ta gol.');
+    const pending = [...(m.pendingEvents ?? [])];
+    const idx = pending.findIndex(e => e.id === eventId);
+    if (idx === -1) throw new Error('Dogodek ne obstaja.');
+    const event = pending[idx];
+    if (event.confirmedBy.includes(userId)) throw new Error('Že si potrdil ta gol.');
 
-  const newConfirmedBy = [...event.confirmedBy, userId];
-  if (!m.attended) m.attended = [];
-  if (!m.attended.includes(userId)) m.attended = [...m.attended, userId];
+    const newConfirmedBy = [...event.confirmedBy, userId];
+    const attended = [...(m.attended ?? [])];
+    if (!attended.includes(userId)) attended.push(userId);
 
-  const threshold = requiredConfirmations(m.totalSpots);
-  if (newConfirmedBy.length >= threshold) {
-    pending.splice(idx, 1);
-    const confirmed: ConfirmedEvent = {
-      id: event.id, team: event.team, scorerId: event.scorerId,
-      confirmedBy: newConfirmedBy, confirmedAt: new Date(),
-    };
-    m.events = [...(m.events ?? []), confirmed];
-    m.pendingEvents = pending;
-    if (event.team === 'A') m.scoreA = (m.scoreA ?? 0) + 1;
-    else m.scoreB = (m.scoreB ?? 0) + 1;
-  } else {
-    pending[idx] = { ...event, confirmedBy: newConfirmedBy };
-    m.pendingEvents = pending;
-  }
-  notifyMatch(matchId);
+    const threshold = requiredConfirmations(m.totalSpots);
+    const update: any = { attended };
+
+    if (newConfirmedBy.length >= threshold) {
+      pending.splice(idx, 1);
+      const confirmed: ConfirmedEvent = {
+        id: event.id, team: event.team, scorerId: event.scorerId,
+        confirmedBy: newConfirmedBy, confirmedAt: Timestamp.now(),
+      };
+      update.events = [...(m.events ?? []), confirmed];
+      update.pendingEvents = pending;
+      if (event.team === 'A') update.scoreA = (m.scoreA ?? 0) + 1;
+      else update.scoreB = (m.scoreB ?? 0) + 1;
+    } else {
+      pending[idx] = { ...event, confirmedBy: newConfirmedBy };
+      update.pendingEvents = pending;
+    }
+
+    tx.update(ref, update);
+  });
 }
 
 export async function dismissPendingEvent(matchId: string, eventId: string, requesterId: string) {
-  const m = store.find(x => x.id === matchId);
-  if (!m) throw new Error('Tekma ne obstaja.');
-  if (m.createdBy !== requesterId) throw new Error('Samo gostitelj lahko zavrne predlog.');
-  m.pendingEvents = (m.pendingEvents ?? []).filter(e => e.id !== eventId);
-  notifyMatch(matchId);
+  const ref = doc(db, 'matches', matchId);
+  return runTransaction(db, async tx => {
+    const snap = await tx.get(ref);
+    if (!snap.exists()) throw new Error('Tekma ne obstaja.');
+    const m = snap.data() as Omit<Match, 'id'>;
+    if (m.createdBy !== requesterId) throw new Error('Samo gostitelj lahko zavrne predlog.');
+    tx.update(ref, { pendingEvents: (m.pendingEvents ?? []).filter(e => e.id !== eventId) });
+  });
 }
 
 // ─── ELO + finalize (writes user docs to Firestore) ──────────────────────────
@@ -309,8 +336,11 @@ function eloDelta(playerElo: number, oppTeamAvg: number, actual: number): number
 }
 
 export async function finalizeMatch(matchId: string, requesterId: string) {
-  const m = store.find(x => x.id === matchId);
-  if (!m) throw new Error('Tekma ne obstaja.');
+  const ref = doc(db, 'matches', matchId);
+  const snap = await getDoc(ref);
+  if (!snap.exists()) throw new Error('Tekma ne obstaja.');
+  const m = snap.data() as Omit<Match, 'id'>;
+
   if (m.createdBy !== requesterId) throw new Error('Samo gostitelj lahko zaključi tekmo.');
   if (!m.isPremium) throw new Error('Samo Premium tekme imajo ELO/reputacijo.');
   if (m.finalized) throw new Error('Tekma je že zaključena.');
@@ -328,9 +358,9 @@ export async function finalizeMatch(matchId: string, requesterId: string) {
   const userDocs = await Promise.all(
     allPlayers.map(async uid => {
       try {
-        const snap = await getDoc(doc(db, 'users', uid));
-        if (snap.exists()) {
-          const d = snap.data() as UserDoc;
+        const uSnap = await getDoc(doc(db, 'users', uid));
+        if (uSnap.exists()) {
+          const d = uSnap.data() as UserDoc;
           return { uid, elo: d.elo ?? STARTING_ELO, reputation: d.reputation ?? STARTING_REPUTATION };
         }
       } catch { /* no user doc yet */ }
@@ -347,7 +377,6 @@ export async function finalizeMatch(matchId: string, requesterId: string) {
   const avgB = avg(teamB);
   const actualA = result === 'team_a_won' ? 1 : result === 'draw' ? 0.5 : 0;
 
-  // Count confirmed goals per scorer.
   const goalsByPlayer = new Map<string, number>();
   for (const e of (m.events ?? [])) {
     if (e.scorerId) goalsByPlayer.set(e.scorerId, (goalsByPlayer.get(e.scorerId) ?? 0) + 1);
@@ -360,28 +389,20 @@ export async function finalizeMatch(matchId: string, requesterId: string) {
     const hasAttended = attended.includes(u.uid);
     const goals = goalsByPlayer.get(u.uid) ?? 0;
 
-    // ELO = win/loss outcome (chess formula) + bonus per goal scored. Only counts if you showed up.
     const resultElo = hasAttended ? eloDelta(u.elo, oppAvg, actual) : 0;
     const goalElo = hasAttended ? goals * GOAL_ELO_BONUS : 0;
     const dElo = resultElo + goalElo;
-
-    // Reputation: reward showing up, penalise no-shows.
     const dRep = hasAttended ? REP_ATTEND : -REP_NO_SHOW;
 
     return {
-      uid: u.uid,
-      goals,
-      resultElo,
-      goalElo,
-      dElo,
-      dRep,
+      uid: u.uid, goals, resultElo, goalElo, dElo, dRep,
       newElo: Math.max(0, u.elo + dElo),
       newRep: Math.max(0, u.reputation + dRep),
     };
   });
 
-  // Write only real user docs (not demo short-ids). Use allSettled so a failed
-  // write for one player doesn't abort the whole finalization.
+  await setDoc(ref, { result, finalized: true, status: 'closed' }, { merge: true });
+
   const realUsers = updates.filter(u => !DEMO_USERS.includes(u.uid as any) && u.uid.length > 10);
   await Promise.allSettled(
     realUsers.map(u =>
@@ -391,28 +412,31 @@ export async function finalizeMatch(matchId: string, requesterId: string) {
     )
   );
 
-  m.result = result;
-  m.finalized = true;
-  m.status = 'closed';
-  notifyMatch(matchId);
-  notifyAll();
-
   return { result, perPlayer: updates };
 }
 
-// ─── Subscriptions ────────────────────────────────────────────────────────────
+// ─── Subscriptions (Firestore) ────────────────────────────────────────────────
 
-export function subscribeMatch(matchId: string, onData: (m: Match | null) => void, _onError?: (e: Error) => void) {
-  if (!matchListeners.has(matchId)) matchListeners.set(matchId, new Set());
-  matchListeners.get(matchId)!.add(onData);
-  onData(store.find(x => x.id === matchId) ?? null);
-  return () => { matchListeners.get(matchId)?.delete(onData); };
+export function subscribeMatch(matchId: string, onData: (m: Match | null) => void, onError?: (e: Error) => void) {
+  return onSnapshot(
+    doc(db, 'matches', matchId),
+    snap => onData(snap.exists() ? ({ id: snap.id, ...snap.data() } as Match) : null),
+    err => onError?.(err as any)
+  );
 }
 
 export function subscribeMatches(onData: (ms: Match[]) => void) {
-  allListeners.add(onData);
-  onData(getOpen());
-  return () => { allListeners.delete(onData); };
+  const q = query(collection(db, 'matches'), where('isPublic', '==', true));
+  return onSnapshot(
+    q,
+    snap => {
+      const matches = snap.docs
+        .map(d => ({ id: d.id, ...d.data() } as Match))
+        .filter(m => m.status !== 'closed');
+      onData(matches);
+    },
+    () => onData([])
+  );
 }
 
 // ─── User doc (Firestore) ─────────────────────────────────────────────────────
@@ -431,6 +455,29 @@ export async function ensureUserDoc(uid: string, patch?: Partial<UserDoc>) {
   }
 }
 
+export async function resolveUserNames(uids: string[]): Promise<Map<string, string>> {
+  const result = new Map<string, string>();
+  const toFetch = uids.filter(uid => uid.length > 10);
+  uids.filter(uid => uid.length <= 10).forEach(uid => result.set(uid, uid));
+
+  const fetches = await Promise.allSettled(
+    toFetch.map(async uid => {
+      const snap = await getDoc(doc(db, 'users', uid));
+      if (snap.exists()) {
+        const d = snap.data() as UserDoc;
+        const name = d.displayName || (d.email ? d.email.split('@')[0] : null) || uid.slice(0, 8);
+        return { uid, name };
+      }
+      return { uid, name: uid.slice(0, 8) };
+    })
+  );
+
+  for (const r of fetches) {
+    if (r.status === 'fulfilled') result.set(r.value.uid, r.value.name);
+  }
+  return result;
+}
+
 export function subscribeUserDoc(uid: string, onData: (u: UserDoc | null) => void, onError?: (e: Error) => void) {
   try {
     const ref = doc(db, 'users', uid);
@@ -444,28 +491,6 @@ export function subscribeUserDoc(uid: string, onData: (u: UserDoc | null) => voi
   }
 }
 
-// ─── Demo seed ────────────────────────────────────────────────────────────────
+// ─── Demo users (kept for MatchDetailsScreen switcher) ────────────────────────
 
 export const DEMO_USERS = ['ana', 'marc', 'luka', 'niko'] as const;
-
-(function seedDemo() {
-  if (store.length > 0) return;
-  const tomorrow = new Date();
-  tomorrow.setDate(tomorrow.getDate() + 1);
-  tomorrow.setHours(18, 0, 0, 0);
-  store.push({
-    id: 'demo-seed',
-    sport: 'futsal',
-    location: { lat: 46.5617, lng: 15.6386, name: 'Demo: tekma s čakalno vrsto' },
-    datetime: tomorrow,
-    totalSpots: 2,
-    filledSpots: 2,
-    status: 'full',
-    isPublic: true,
-    players: ['ana', 'marc'],
-    waitlist: ['luka'],
-    createdBy: 'ana',
-    createdAt: new Date(),
-    isPremium: false,
-  });
-})();

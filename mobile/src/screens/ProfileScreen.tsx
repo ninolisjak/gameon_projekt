@@ -44,6 +44,13 @@ export default function ProfileScreen() {
     );
   }
 
+  function handleLogout() {
+    Alert.alert('Odjava', 'Si prepričan, da se želiš odjaviti?', [
+      { text: 'Prekliči', style: 'cancel' },
+      { text: 'Odjava', style: 'destructive', onPress: () => auth.signOut() },
+    ]);
+  }
+
   function handleCancel() {
     Alert.alert('Prekliči Premium', 'Si prepričan, da želiš preklicati Premium?', [
       { text: 'Ne', style: 'cancel' },
@@ -171,6 +178,10 @@ export default function ProfileScreen() {
               </View>
             </View>
           )}
+          <TouchableOpacity style={styles.logoutBtn} onPress={handleLogout} activeOpacity={0.8}>
+            <Ionicons name="log-out-outline" size={18} color="#ef4444" />
+            <Text style={styles.logoutBtnText}>Odjava</Text>
+          </TouchableOpacity>
         </View>
       </ScrollView>
     </View>

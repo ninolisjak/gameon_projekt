@@ -22,19 +22,6 @@ type Match = {
   createdBy?: string;
 };
 
-const TEST_MATCH: Match = {
-  id: 'test',
-  sport: 'futsal',
-  location: { lat: 46.5547, lng: 15.6459, name: 'Športni center Tabor' },
-  datetime: null,
-  totalSpots: 10,
-  filledSpots: 3,
-  status: 'open',
-  players: ['demo1', 'demo2', 'demo3'],
-  waitlist: [],
-  createdBy: 'demo1',
-};
-
 const RADIUS_OPTIONS: (number | null)[] = [1, 2, 5, 10, null];
 const MAP_CENTER_DEFAULT = { lat: 46.5547, lng: 15.6459 };
 
@@ -60,7 +47,7 @@ function formatTime(ts: any): string {
 }
 
 function buildMapHtml(matches: Match[], center: { lat: number; lng: number }, radiusKm: number | null, accentColor = '#3b82f6') {
-  const allMarkers = [TEST_MATCH, ...matches];
+  const allMarkers = [...matches];
   const markers = allMarkers.map(m => {
     const isFutsal = m.sport === 'futsal';
     const icon = isFutsal ? '⚽' : '🏀';
@@ -140,7 +127,7 @@ export default function MapScreen() {
   );
 
   const visibleMatches = React.useMemo(() => {
-    const all = [TEST_MATCH, ...matches];
+    const all = [...matches];
     return radius === null
       ? all
       : all.filter(m => haversineKm(mapCenter.lat, mapCenter.lng, m.location.lat, m.location.lng) <= radius);
