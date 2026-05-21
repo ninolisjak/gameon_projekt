@@ -31,7 +31,7 @@ export default function MatchDetailsScreen() {
   const [match, setMatch] = React.useState<Match | null>(initial ?? null);
   const [loading, setLoading] = React.useState(!initial);
   const [busy, setBusy] = React.useState(false);
-  const [userId, setUserId] = React.useState<string>('niko');
+  const [userId, setUserId] = React.useState<string>(auth.currentUser?.uid ?? 'niko');
 
   React.useEffect(() => {
     const unsub = subscribeMatch(
@@ -151,6 +151,16 @@ export default function MatchDetailsScreen() {
           <View style={styles.userSwitcherCard}>
             <Text style={styles.userSwitcherLabel}>Demo · izberi identiteto</Text>
             <View style={styles.userSwitcherRow}>
+              {auth.currentUser && (
+                <TouchableOpacity
+                  key="me"
+                  style={[styles.userPill, userId === auth.currentUser.uid && styles.userPillActive]}
+                  onPress={() => setUserId(auth.currentUser!.uid)}
+                  activeOpacity={0.8}
+                >
+                  <Text style={[styles.userPillText, userId === auth.currentUser.uid && styles.userPillTextActive]}>Jaz</Text>
+                </TouchableOpacity>
+              )}
               {DEMO_USERS.map(u => (
                 <TouchableOpacity
                   key={u}
@@ -259,9 +269,13 @@ export default function MatchDetailsScreen() {
 
       <View style={styles.ctaBar}>
         {match.finalized ? (
-          <View style={styles.fullBtn}><Text style={styles.fullBtnText}>Tekma končana</Text></View>
+          <View style={styles.fullBtn}>
+            <Text style={styles.fullBtnText}>Tekma končana</Text>
+          </View>
         ) : isCreator ? (
-          <View style={styles.fullBtn}><Text style={styles.fullBtnText}>Ti si ustvarjalec tekme</Text></View>
+          <View style={styles.fullBtn}>
+            <Text style={styles.fullBtnText}>Ti si ustvarjalec tekme</Text>
+          </View>
         ) : isJoined ? (
           <TouchableOpacity style={styles.leaveBtn} onPress={handleLeave} disabled={busy}>
             {busy ? <ActivityIndicator color={colors.danger} /> : (<><Ionicons name="exit-outline" size={20} color={colors.danger} /><Text style={styles.leaveBtnText}>Odjavi se</Text></>)}

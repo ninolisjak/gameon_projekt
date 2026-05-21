@@ -58,7 +58,7 @@ function formatTime(ts: any): string {
   return d.toLocaleTimeString('sl-SI', { hour: '2-digit', minute: '2-digit' });
 }
 
-function buildMapHtml(matches: Match[], center: { lat: number; lng: number }, radiusKm: number | null) {
+function buildMapHtml(matches: Match[], center: { lat: number; lng: number }, radiusKm: number | null, accentColor = '#3b82f6') {
   const allMarkers = [TEST_MATCH, ...matches];
   const markers = allMarkers.map(m => {
     const icon = m.sport === 'futsal' ? '⚽' : '🏀';
@@ -175,6 +175,7 @@ export default function MapScreen() {
   function openDetails(m: Match) { 
     navigation.navigate('MatchDetails', { matchId: m.id, initial: m }); 
   }
+
 
   return (
     <View style={styles.container}>

@@ -11,6 +11,7 @@ export type MatchResult = 'pending' | 'team_a_won' | 'team_b_won' | 'draw';
 export type PendingEvent = {
   id: string;
   team: 'A' | 'B';
+  scorerId: string;
   proposedBy: string;
   confirmedBy: string[];
   createdAt?: any;
@@ -19,6 +20,7 @@ export type PendingEvent = {
 export type ConfirmedEvent = {
   id: string;
   team: 'A' | 'B';
+  scorerId: string;
   confirmedBy: string[];
   confirmedAt?: any;
 };
@@ -77,8 +79,7 @@ export type Match = {
   waitlist: string[];
   createdBy: string;
   createdAt?: any;
-
-  // Premium-match fields (only set when isPremium === true)
+  // Premium-only fields
   isPremium?: boolean;
   teamA?: string[];
   teamB?: string[];
@@ -104,11 +105,18 @@ export type UserDoc = {
   updatedAt?: any;
 };
 
+export type JoinResult =
+  | { status: 'joined' }
+  | { status: 'waitlisted'; position: number };
+
+// ─── Constants ────────────────────────────────────────────────────────────────
+
 export const STARTING_ELO = 700;
 export const STARTING_REPUTATION = 50;
 const ELO_K = 32;
-const REP_ATTEND = 2;
-const REP_NO_SHOW = 5;
+const GOAL_ELO_BONUS = 5;   // ELO gained per goal you personally scored
+const REP_ATTEND = 2;       // reputation gained for showing up
+const REP_NO_SHOW = 5;      // reputation lost for not showing up
 
 export function requiredConfirmations(totalSpots: number): number {
   return Math.max(2, Math.ceil(totalSpots / 3));
@@ -486,16 +494,20 @@ export async function joinMatch(matchId: string, userId: string, opts?: { userIs
       status: newFilled >= data.totalSpots ? 'full' : 'open',
     };
 
-    if (data.isPremium) {
-      const teamA = data.teamA ?? [];
-      const teamB = data.teamB ?? [];
-      const half = Math.floor(data.totalSpots / 2);
-      if (teamA.length <= teamB.length && teamA.length < half) {
-        update.teamA = [...teamA, userId];
-      } else {
-        update.teamB = [...teamB, userId];
-      }
+  if (m.filledSpots < m.totalSpots) {
+    m.players = [...m.players, userId];
+    if (m.isPremium) {
+      const half = Math.floor(m.totalSpots / 2);
+      const teamA = m.teamA ?? [];
+      const teamB = m.teamB ?? [];
+      if (teamA.length <= teamB.length && teamA.length < half) m.teamA = [...teamA, userId];
+      else m.teamB = [...(m.teamB ?? []), userId];
     }
+    syncCapacity(m);
+    notifyMatch(matchId);
+    notifyAll();
+    return { status: 'joined' };
+  }
 
     tx.update(ref, update);
   });
@@ -712,93 +724,99 @@ export async function swapTeam(matchId: string, userId: string, requesterId: str
   });
 }
 
+// ─── Premium live-scoring (in-memory) ────────────────────────────────────────
+
 export async function checkIn(matchId: string, userId: string) {
-  const ref = doc(db, 'matches', matchId);
-  await updateDoc(ref, { attended: arrayUnion(userId) });
+  const m = store.find(x => x.id === matchId);
+  if (!m) throw new Error('Tekma ne obstaja.');
+  if (!m.attended) m.attended = [];
+  if (!m.attended.includes(userId)) m.attended = [...m.attended, userId];
+  notifyMatch(matchId);
 }
 
-export async function proposeGoal(matchId: string, team: 'A' | 'B', proposerId: string) {
-  const ref = doc(db, 'matches', matchId);
-  await runTransaction(db, async tx => {
-    const snap = await tx.get(ref);
-    if (!snap.exists()) throw new Error('Tekma ne obstaja.');
-    const data = snap.data() as Match;
-    if (!data.isPremium) throw new Error('Samo Premium tekme imajo živo točkovanje.');
-    if (data.finalized) throw new Error('Tekma je že zaključena.');
-    if (!data.players?.includes(proposerId)) throw new Error('Samo prijavljeni igralci lahko predlagajo gol.');
+export async function swapTeam(matchId: string, userId: string, requesterId: string) {
+  const m = store.find(x => x.id === matchId);
+  if (!m) throw new Error('Tekma ne obstaja.');
+  if (!m.isPremium) throw new Error('Samo Premium tekme imajo ekipe.');
+  if (m.createdBy !== requesterId) throw new Error('Samo gostitelj lahko premika igralce.');
+  if (m.finalized) throw new Error('Tekma je že zaključena.');
 
-    const event: PendingEvent = {
-      id: genId(),
-      team,
-      proposedBy: proposerId,
-      confirmedBy: [proposerId],
-      createdAt: Timestamp.now(),
-    };
+  const teamA = m.teamA ?? [];
+  const teamB = m.teamB ?? [];
+  if (teamA.includes(userId)) {
+    m.teamA = teamA.filter(p => p !== userId);
+    m.teamB = [...teamB, userId];
+  } else if (teamB.includes(userId)) {
+    m.teamB = teamB.filter(p => p !== userId);
+    m.teamA = [...teamA, userId];
+  }
+  notifyMatch(matchId);
+}
 
-    const pending = [...(data.pendingEvents ?? []), event];
-    const attended = data.attended ?? [];
-    const update: any = { pendingEvents: pending };
-    if (!attended.includes(proposerId)) update.attended = [...attended, proposerId];
-    tx.update(ref, update);
-  });
+export async function proposeGoal(matchId: string, scorerId: string, proposerId: string) {
+  const m = store.find(x => x.id === matchId);
+  if (!m) throw new Error('Tekma ne obstaja.');
+  if (!m.isPremium) throw new Error('Samo Premium tekme imajo živo točkovanje.');
+  if (m.finalized) throw new Error('Tekma je že zaključena.');
+  if (!m.players.includes(proposerId)) throw new Error('Samo prijavljeni igralci lahko predlagajo gol.');
+  if (!m.players.includes(scorerId)) throw new Error('Strelec ni prijavljen na tekmo.');
+
+  const team: 'A' | 'B' = (m.teamA ?? []).includes(scorerId) ? 'A' : 'B';
+  const event: PendingEvent = {
+    id: genId(), team, scorerId, proposedBy: proposerId,
+    confirmedBy: [proposerId], createdAt: new Date(),
+  };
+  m.pendingEvents = [...(m.pendingEvents ?? []), event];
+  if (!m.attended) m.attended = [];
+  if (!m.attended.includes(scorerId)) m.attended = [...m.attended, scorerId];
+  if (!m.attended.includes(proposerId)) m.attended = [...m.attended, proposerId];
+  notifyMatch(matchId);
 }
 
 export async function confirmGoal(matchId: string, eventId: string, userId: string) {
-  const ref = doc(db, 'matches', matchId);
-  await runTransaction(db, async tx => {
-    const snap = await tx.get(ref);
-    if (!snap.exists()) throw new Error('Tekma ne obstaja.');
-    const data = snap.data() as Match;
-    if (!data.isPremium) throw new Error('Samo Premium tekme.');
-    if (data.finalized) throw new Error('Tekma je že zaključena.');
-    if (!data.players?.includes(userId)) throw new Error('Samo prijavljeni igralci lahko potrdijo gol.');
+  const m = store.find(x => x.id === matchId);
+  if (!m) throw new Error('Tekma ne obstaja.');
+  if (!m.isPremium) throw new Error('Samo Premium tekme.');
+  if (m.finalized) throw new Error('Tekma je že zaključena.');
+  if (!m.players.includes(userId)) throw new Error('Samo prijavljeni igralci lahko potrdijo gol.');
 
-    const pending = [...(data.pendingEvents ?? [])];
-    const idx = pending.findIndex(e => e.id === eventId);
-    if (idx === -1) throw new Error('Dogodek ne obstaja.');
-    const event = pending[idx];
-    if (event.confirmedBy.includes(userId)) throw new Error('Že si potrdil ta gol.');
+  const pending = [...(m.pendingEvents ?? [])];
+  const idx = pending.findIndex(e => e.id === eventId);
+  if (idx === -1) throw new Error('Dogodek ne obstaja.');
+  const event = pending[idx];
+  if (event.confirmedBy.includes(userId)) throw new Error('Že si potrdil ta gol.');
 
-    const newConfirmedBy = [...event.confirmedBy, userId];
-    const threshold = requiredConfirmations(data.totalSpots);
+  const newConfirmedBy = [...event.confirmedBy, userId];
+  if (!m.attended) m.attended = [];
+  if (!m.attended.includes(userId)) m.attended = [...m.attended, userId];
 
-    const update: any = {};
-    const attended = data.attended ?? [];
-    if (!attended.includes(userId)) update.attended = [...attended, userId];
-
-    if (newConfirmedBy.length >= threshold) {
-      pending.splice(idx, 1);
-      const confirmed: ConfirmedEvent = {
-        id: event.id,
-        team: event.team,
-        confirmedBy: newConfirmedBy,
-        confirmedAt: Timestamp.now(),
-      };
-      const events = [...(data.events ?? []), confirmed];
-      update.pendingEvents = pending;
-      update.events = events;
-      if (event.team === 'A') update.scoreA = (data.scoreA ?? 0) + 1;
-      else update.scoreB = (data.scoreB ?? 0) + 1;
-    } else {
-      pending[idx] = { ...event, confirmedBy: newConfirmedBy };
-      update.pendingEvents = pending;
-    }
-
-    tx.update(ref, update);
-  });
+  const threshold = requiredConfirmations(m.totalSpots);
+  if (newConfirmedBy.length >= threshold) {
+    pending.splice(idx, 1);
+    const confirmed: ConfirmedEvent = {
+      id: event.id, team: event.team, scorerId: event.scorerId,
+      confirmedBy: newConfirmedBy, confirmedAt: new Date(),
+    };
+    m.events = [...(m.events ?? []), confirmed];
+    m.pendingEvents = pending;
+    if (event.team === 'A') m.scoreA = (m.scoreA ?? 0) + 1;
+    else m.scoreB = (m.scoreB ?? 0) + 1;
+  } else {
+    pending[idx] = { ...event, confirmedBy: newConfirmedBy };
+    m.pendingEvents = pending;
+  }
+  notifyMatch(matchId);
 }
 
 export async function dismissPendingEvent(matchId: string, eventId: string, requesterId: string) {
-  const ref = doc(db, 'matches', matchId);
-  await runTransaction(db, async tx => {
-    const snap = await tx.get(ref);
-    if (!snap.exists()) throw new Error('Tekma ne obstaja.');
-    const data = snap.data() as Match;
-    if (data.createdBy !== requesterId) throw new Error('Samo gostitelj lahko zavrne predlog.');
-    const pending = (data.pendingEvents ?? []).filter(e => e.id !== eventId);
-    tx.update(ref, { pendingEvents: pending });
-  });
+  const m = store.find(x => x.id === matchId);
+  if (!m) throw new Error('Tekma ne obstaja.');
+  if (m.createdBy !== requesterId) throw new Error('Samo gostitelj lahko zavrne predlog.');
+  m.pendingEvents = (m.pendingEvents ?? []).filter(e => e.id !== eventId);
+  notifyMatch(matchId);
 }
+
+// ─── ELO + finalize (writes user docs to Firestore) ──────────────────────────
 
 function eloDelta(playerElo: number, oppTeamAvg: number, actual: number): number {
   const expected = 1 / (1 + Math.pow(10, (oppTeamAvg - playerElo) / 400));
@@ -814,11 +832,11 @@ export async function finalizeMatch(matchId: string, requesterId: string) {
   if (!data.isPremium) throw new Error('Samo Premium tekme imajo ELO/reputacijo.');
   if (data.finalized) throw new Error('Tekma je že zaključena.');
 
-  const teamA = data.teamA ?? [];
-  const teamB = data.teamB ?? [];
-  const scoreA = data.scoreA ?? 0;
-  const scoreB = data.scoreB ?? 0;
-  const attended = data.attended ?? [];
+  const teamA = m.teamA ?? [];
+  const teamB = m.teamB ?? [];
+  const scoreA = m.scoreA ?? 0;
+  const scoreB = m.scoreB ?? 0;
+  const attended = m.attended ?? [];
 
   const result: MatchResult =
     scoreA > scoreB ? 'team_a_won' : scoreB > scoreA ? 'team_b_won' : 'draw';
@@ -826,52 +844,67 @@ export async function finalizeMatch(matchId: string, requesterId: string) {
   const allPlayers = [...teamA, ...teamB];
   const userDocs = await Promise.all(
     allPlayers.map(async uid => {
-      const u = await getDoc(doc(db, 'users', uid));
-      if (u.exists()) {
-        const d = u.data() as UserDoc;
-        return { uid, elo: d.elo ?? STARTING_ELO, reputation: d.reputation ?? STARTING_REPUTATION };
-      }
+      try {
+        const snap = await getDoc(doc(db, 'users', uid));
+        if (snap.exists()) {
+          const d = snap.data() as UserDoc;
+          return { uid, elo: d.elo ?? STARTING_ELO, reputation: d.reputation ?? STARTING_REPUTATION };
+        }
+      } catch { /* no user doc yet */ }
       return { uid, elo: STARTING_ELO, reputation: STARTING_REPUTATION };
     })
   );
   const eloMap = new Map(userDocs.map(u => [u.uid, u.elo]));
 
-  function avg(team: string[]): number {
-    if (team.length === 0) return STARTING_ELO;
-    const sum = team.reduce((s, uid) => s + (eloMap.get(uid) ?? STARTING_ELO), 0);
-    return sum / team.length;
-  }
+  const avg = (team: string[]) =>
+    team.length === 0 ? STARTING_ELO :
+    team.reduce((s, uid) => s + (eloMap.get(uid) ?? STARTING_ELO), 0) / team.length;
+
   const avgA = avg(teamA);
   const avgB = avg(teamB);
-
   const actualA = result === 'team_a_won' ? 1 : result === 'draw' ? 0.5 : 0;
-  const actualB = 1 - actualA;
+
+  // Count confirmed goals per scorer.
+  const goalsByPlayer = new Map<string, number>();
+  for (const e of (m.events ?? [])) {
+    if (e.scorerId) goalsByPlayer.set(e.scorerId, (goalsByPlayer.get(e.scorerId) ?? 0) + 1);
+  }
 
   const updates = userDocs.map(u => {
     const onA = teamA.includes(u.uid);
     const oppAvg = onA ? avgB : avgA;
-    const actual = onA ? actualA : actualB;
+    const actual = onA ? actualA : 1 - actualA;
     const hasAttended = attended.includes(u.uid);
+    const goals = goalsByPlayer.get(u.uid) ?? 0;
 
-    const dElo = hasAttended ? eloDelta(u.elo, oppAvg, actual) : 0;
+    // ELO = win/loss outcome (chess formula) + bonus per goal scored. Only counts if you showed up.
+    const resultElo = hasAttended ? eloDelta(u.elo, oppAvg, actual) : 0;
+    const goalElo = hasAttended ? goals * GOAL_ELO_BONUS : 0;
+    const dElo = resultElo + goalElo;
+
+    // Reputation: reward showing up, penalise no-shows.
     const dRep = hasAttended ? REP_ATTEND : -REP_NO_SHOW;
 
     return {
       uid: u.uid,
-      newElo: Math.max(0, u.elo + dElo),
-      newRep: Math.max(0, u.reputation + dRep),
+      goals,
+      resultElo,
+      goalElo,
       dElo,
       dRep,
+      newElo: Math.max(0, u.elo + dElo),
+      newRep: Math.max(0, u.reputation + dRep),
     };
   });
 
-  await Promise.all(
-    updates.map(u =>
-      setDoc(
-        doc(db, 'users', u.uid),
+  // Write only real user docs (not demo short-ids). Use allSettled so a failed
+  // write for one player doesn't abort the whole finalization.
+  const realUsers = updates.filter(u => !DEMO_USERS.includes(u.uid as any) && u.uid.length > 10);
+  await Promise.allSettled(
+    realUsers.map(u =>
+      setDoc(doc(db, 'users', u.uid),
         { uid: u.uid, elo: u.newElo, reputation: u.newRep, updatedAt: Timestamp.now() },
-        { merge: true }
-      )
+        { merge: true })
     )
   );
 
@@ -937,18 +970,15 @@ export function subscribeGroups(userId: string, onData: (gs: RecurringGroup[]) =
 // ── User docs ──────────────────────────────────────────────────────────────
 export async function ensureUserDoc(uid: string, patch?: Partial<UserDoc>) {
   const ref = doc(db, 'users', uid);
-  const snap = await getDoc(ref);
-  if (!snap.exists()) {
-    await setDoc(ref, {
-      uid,
-      elo: STARTING_ELO,
-      reputation: STARTING_REPUTATION,
-      isPremium: false,
-      updatedAt: Timestamp.now(),
-      ...patch,
-    });
-  } else if (patch) {
-    await setDoc(ref, { ...patch, updatedAt: Timestamp.now() }, { merge: true });
+  try {
+    const snap = await getDoc(ref);
+    if (!snap.exists()) {
+      await setDoc(ref, { uid, elo: STARTING_ELO, reputation: STARTING_REPUTATION, isPremium: false, updatedAt: Timestamp.now(), ...patch });
+    } else if (patch) {
+      await setDoc(ref, { ...patch, updatedAt: Timestamp.now() }, { merge: true });
+    }
+  } catch (e) {
+    console.warn('ensureUserDoc failed (no Firestore?)', e);
   }
 }
 
@@ -959,6 +989,9 @@ export function subscribeUserDoc(uid: string, onData: (u: UserDoc | null) => voi
     onData(snap.data() as UserDoc);
   }, err => onError?.(err));
 }
+
+// ─── Demo seed ────────────────────────────────────────────────────────────────
+
 export const DEMO_USERS = ['ana', 'marc', 'luka', 'niko'] as const;
 
 (function seedDemo() {
@@ -980,5 +1013,6 @@ export const DEMO_USERS = ['ana', 'marc', 'luka', 'niko'] as const;
     waitlist: ['luka'],
     createdBy: 'ana',
     createdAt: new Date(),
+    isPremium: false,
   });
 })();
