@@ -12,7 +12,6 @@ import MapScreen from './src/screens/MapScreen';
 import CreateMatchScreen from './src/screens/CreateMatchScreen';
 import MatchDetailsScreen from './src/screens/MatchDetailsScreen';
 import LoginScreen from './src/screens/LoginScreen';
-import { drawerStyles } from './src/styles/AppStyles';
 import ProfileScreen from './src/screens/ProfileScreen';
 import { makeDrawerStyles } from './src/styles/AppStyles';
 import { PremiumProvider, useColors } from './src/context/PremiumContext';
@@ -103,15 +102,10 @@ export default function App() {
   }
 
   return (
-    <SafeAreaProvider>
-      <NavigationContainer>
-        {user ? <MainDrawer /> : <LoginScreen />}
-      </NavigationContainer>
-    </SafeAreaProvider>
     <PremiumProvider>
       <SafeAreaProvider>
         <NavigationContainer>
-          <MainDrawer />
+          {user ? <MainDrawer /> : <LoginScreen />}
         </NavigationContainer>
       </SafeAreaProvider>
     </PremiumProvider>

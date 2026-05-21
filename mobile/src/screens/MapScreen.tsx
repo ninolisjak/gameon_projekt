@@ -59,7 +59,7 @@ function formatTime(ts: any): string {
   return d.toLocaleTimeString('sl-SI', { hour: '2-digit', minute: '2-digit' });
 }
 
-function buildMapHtml(matches: Match[], accentColor: string) {
+function buildMapHtml(matches: Match[], center: { lat: number; lng: number }, radiusKm: number | null, accentColor = '#3b82f6') {
   const allMarkers = [TEST_MATCH, ...matches];
   const markers = allMarkers.map(m => {
     const isFutsal = m.sport === 'futsal';
@@ -154,8 +154,8 @@ export default function MapScreen() {
   }, [radius, mapCenter]);
 
   const mapHtml = React.useMemo(
-    () => buildMapHtml(visibleMatches, mapCenter, radius),
-    [visibleMatches, mapCenter, radius],
+    () => buildMapHtml(visibleMatches, mapCenter, radius, colors.primary),
+    [visibleMatches, mapCenter, radius, colors.primary],
   );
 
   async function handleLocate() {
@@ -182,7 +182,6 @@ export default function MapScreen() {
     navigation.navigate('MatchDetails', { matchId: m.id, initial: m });
   }
 
-  const mapHtml = React.useMemo(() => buildMapHtml(matches, colors.primary), [matches, colors.primary]);
 
   return (
     <View style={styles.container}>

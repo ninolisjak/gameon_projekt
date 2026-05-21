@@ -4,7 +4,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { auth } from '../config/firebase';
-import { joinMatch, leaveMatch, subscribeMatch, Match } from '../services/matchService';
+import { joinMatch, leaveMatch, leaveWaitlist, subscribeMatch, Match, DEMO_USERS } from '../services/matchService';
 import { makeStyles } from '../styles/MatchDetailsScreenStyles';
 import { useColors, usePremium } from '../context/PremiumContext';
 import PremiumMatchPanel from '../components/PremiumMatchPanel';
@@ -263,23 +263,7 @@ export default function MatchDetailsScreen() {
           <View style={styles.fullBtn}>
             <Text style={styles.fullBtnText}>Tekma končana</Text>
           </View>
-        ) : isJoined ? (
-          isCreator ? (
-            <View style={styles.fullBtn}>
-              <Text style={styles.fullBtnText}>Ti si ustvarjalec tekme</Text>
-            </View>
-          ) : (
-            <TouchableOpacity style={styles.leaveBtn} onPress={handleLeave} disabled={busy}>
-              {busy ? <ActivityIndicator color={colors.danger} /> : (
-                <>
-                  <Ionicons name="exit-outline" size={20} color={colors.danger} />
-                  <Text style={styles.leaveBtnText}>Odjavi se</Text>
-                </>
-              )}
-            </TouchableOpacity>
-          )
-        ) : isFull ? (
-        {isCreator ? (
+        ) : isCreator ? (
           <View style={styles.fullBtn}>
             <Text style={styles.fullBtnText}>Ti si ustvarjalec tekme</Text>
           </View>
