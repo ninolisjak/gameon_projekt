@@ -79,6 +79,13 @@ export type Match = {
   isPrivate?: boolean;
   inviteCode?: string;
   groupId?: string;
+  // Recurring match
+  isRecurring?: boolean;
+  // Start-consent flow
+  startRequested?: boolean;
+  startConsent?: Record<string, 'yes' | 'no' | 'pending'>;
+  matchStarted?: boolean;
+  cancelReason?: string;
 };
 
 export type UserDoc = {
@@ -88,6 +95,7 @@ export type UserDoc = {
   isPremium: boolean;
   displayName?: string;
   email?: string;
+  expoPushToken?: string;
   updatedAt?: any;
 };
 
@@ -159,6 +167,7 @@ export async function createMatch(data: {
   totalSpots: number;
   createdBy: string;
   isPremium?: boolean;
+  isRecurring?: boolean;
 }) {
   const base = {
     sport: data.sport,
@@ -169,6 +178,7 @@ export async function createMatch(data: {
     status: data.totalSpots <= 1 ? 'full' : 'open',
     isPublic: true,
     isPrivate: false,
+    isRecurring: data.isRecurring ?? false,
     players: [data.createdBy],
     waitlist: [],
     createdBy: data.createdBy,
@@ -706,6 +716,111 @@ export async function finalizeMatch(matchId: string, requesterId: string) {
   await updateDoc(ref, { result, finalized: true, status: 'closed' });
 
   return { result, perPlayer: updates };
+}
+
+// ── Invite eligible players ───────────────────────────────────────────────────
+
+export async function fetchInvitablePlayers(
+  minElo: number,
+  minRep: number,
+  excludeIds: string[],
+): Promise<UserDoc[]> {
+  const q = query(collection(db, 'users'), where('elo', '>=', minElo));
+  const snap = await getDocs(q);
+  return snap.docs
+    .map(d => ({ ...d.data(), uid: d.id } as UserDoc))
+    .filter(u => (u.reputation ?? 0) > minRep && !excludeIds.includes(u.uid));
+}
+
+export async function invitePlayerToMatch(
+  matchId: string,
+  targetUserId: string,
+  team: 'A' | 'B',
+): Promise<void> {
+  const ref = doc(db, 'matches', matchId);
+  await runTransaction(db, async tx => {
+    const snap = await tx.get(ref);
+    if (!snap.exists()) throw new Error('Tekma ne obstaja.');
+    const data = snap.data() as Match;
+    if (data.players?.includes(targetUserId)) throw new Error('Igralec je že prijavljen.');
+    if (data.waitlist?.includes(targetUserId)) throw new Error('Igralec je že na čakalni vrsti.');
+
+    const newFilled = data.filledSpots + 1;
+    const teamField = team === 'A' ? 'teamA' : 'teamB';
+    const currentTeam = (data[teamField] ?? []) as string[];
+    tx.update(ref, {
+      players: arrayUnion(targetUserId),
+      filledSpots: increment(1),
+      status: newFilled >= data.totalSpots ? 'full' : 'open',
+      [teamField]: [...currentTeam, targetUserId],
+    });
+  });
+}
+
+// ── Start-consent flow ────────────────────────────────────────────────────────
+
+export async function requestMatchStart(matchId: string, creatorId: string): Promise<string[]> {
+  const ref = doc(db, 'matches', matchId);
+  return runTransaction(db, async tx => {
+    const snap = await tx.get(ref);
+    if (!snap.exists()) throw new Error('Tekma ne obstaja.');
+    const data = snap.data() as Match;
+    if (data.createdBy !== creatorId) throw new Error('Samo gostitelj lahko začne tekmo.');
+    if (data.matchStarted) throw new Error('Tekma je že začeta.');
+    if (data.startRequested) throw new Error('Začetek je že bil zahtevan.');
+
+    const players = data.players ?? [];
+    const consent: Record<string, 'yes' | 'no' | 'pending'> = {};
+    players.forEach(p => { consent[p] = 'pending'; });
+
+    tx.update(ref, { startRequested: true, startConsent: consent });
+    return players;
+  });
+}
+
+export async function respondToMatchStart(matchId: string, userId: string, response: 'yes' | 'no') {
+  const ref = doc(db, 'matches', matchId);
+  await runTransaction(db, async tx => {
+    const snap = await tx.get(ref);
+    if (!snap.exists()) throw new Error('Tekma ne obstaja.');
+    const data = snap.data() as Match;
+    if (!data.startRequested) return;
+
+    const newConsent = { ...(data.startConsent ?? {}), [userId]: response };
+
+    if (response === 'no') {
+      tx.update(ref, { startRequested: false, startConsent: {} });
+    } else {
+      const players = data.players ?? [];
+      const allAgreed = players.every(p => newConsent[p] === 'yes');
+      if (allAgreed) {
+        tx.update(ref, { startConsent: newConsent, matchStarted: true, startRequested: false });
+      } else {
+        tx.update(ref, { startConsent: newConsent });
+      }
+    }
+  });
+}
+
+export async function getPlayerPushTokens(uids: string[]): Promise<string[]> {
+  const results = await Promise.allSettled(
+    uids.map(async uid => {
+      const snap = await getDoc(doc(db, 'users', uid));
+      if (snap.exists()) {
+        const d = snap.data() as UserDoc;
+        return d.expoPushToken ?? null;
+      }
+      return null;
+    })
+  );
+  return results
+    .filter((r): r is PromiseFulfilledResult<string> => r.status === 'fulfilled' && r.value !== null)
+    .map(r => r.value);
+}
+
+export async function cancelMatchLowAttendance(matchId: string) {
+  const ref = doc(db, 'matches', matchId);
+  await updateDoc(ref, { status: 'closed', cancelReason: 'low_attendance' });
 }
 
 // ── Subscriptions ──────────────────────────────────────────────────────────

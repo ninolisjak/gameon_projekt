@@ -32,6 +32,13 @@
         {
           "locationWhenInUsePermission": "GameOn potrebuje lokacijo za prikaz tekem v bližini."
         }
+      ],
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/icon.png",
+          "color": "#3b82f6"
+        }
       ]
     ],
     "extra": {

@@ -4,7 +4,8 @@ import { Ionicons } from '@expo/vector-icons';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { auth } from '../config/firebase';
-import { joinMatch, leaveMatch, leaveWaitlist, subscribeMatch, resolveUserNames, Match, DEMO_USERS } from '../services/matchService';
+import { joinMatch, leaveMatch, leaveWaitlist, subscribeMatch, resolveUserNames, Match, DEMO_USERS, requestMatchStart, respondToMatchStart, cancelMatchLowAttendance } from '../services/matchService';
+import { showLocalNotification } from '../services/notificationService';
 import { makeStyles } from '../styles/MatchDetailsScreenStyles';
 import { useColors, usePremium } from '../context/PremiumContext';
 import PremiumMatchPanel from '../components/PremiumMatchPanel';
@@ -31,8 +32,17 @@ export default function MatchDetailsScreen() {
   const [match, setMatch] = React.useState<Match | null>(initial ?? null);
   const [loading, setLoading] = React.useState(!initial);
   const [busy, setBusy] = React.useState(false);
+  const [startBusy, setStartBusy] = React.useState(false);
   const [userId, setUserId] = React.useState<string>(auth.currentUser?.uid ?? 'niko');
   const [userNames, setUserNames] = React.useState<Map<string, string>>(new Map());
+
+  // Track previous Firestore values to detect transitions and fire local notifications
+  const prevStartRequestedRef = React.useRef<boolean | null>(null);
+  const prevMatchStartedRef = React.useRef<boolean | null>(null);
+  const prevCancelledRef = React.useRef<boolean | null>(null);
+  // Always-fresh match ref for setTimeout callback
+  const matchRef = React.useRef<Match | null>(null);
+  React.useEffect(() => { matchRef.current = match; }, [match]);
 
   React.useEffect(() => {
     const unsub = subscribeMatch(
@@ -49,6 +59,93 @@ export default function MatchDetailsScreen() {
     if (uids.length === 0) return;
     resolveUserNames(uids).then(setUserNames);
   }, [match?.players?.join(','), match?.waitlist?.join(',')]);
+
+  // Auto-cancel: dep is only match?.id so the timer is set ONCE per match and never reset by
+  // Firestore snapshots (Timestamp is always a new object reference → Object.is = false → would
+  // clear + reset the timer on every snapshot if we used match?.datetime as dep).
+  // Datetime is read from matchRef so we always get the real value even on first load.
+  React.useEffect(() => {
+    if (!match?.id) return;
+
+    function tryCancel() {
+      const cur = matchRef.current;
+      if (!cur || cur.status === 'closed' || cur.finalized || cur.matchStarted || cur.cancelReason) return;
+      if (cur.filledSpots < cur.totalSpots) cancelMatchLowAttendance(cur.id).catch(() => {});
+    }
+
+    const cur = matchRef.current;
+    if (!cur?.datetime) return;
+    const matchDate = cur.datetime?.toDate ? cur.datetime.toDate() : new Date(cur.datetime);
+    if (isNaN(matchDate.getTime())) return;
+
+    const delay = matchDate.getTime() - Date.now();
+    if (delay <= 0) { tryCancel(); return; }
+    const timer = setTimeout(tryCancel, delay);
+    return () => clearTimeout(timer);
+  }, [match?.id]);
+
+  // Local notification: start requested
+  React.useEffect(() => {
+    if (!match) return;
+    const cur = !!match.startRequested;
+    const prev = prevStartRequestedRef.current;
+    if (prev !== null) {
+      if (!prev && cur && match.startConsent?.[userId] === 'pending') {
+        showLocalNotification('Začetek tekme', 'Gostitelj predlaga začetek — potrdi v aplikaciji.').catch(() => {});
+      } else if (prev && !cur && !match.matchStarted) {
+        showLocalNotification('Začetek preklican', 'Ena oseba ni soglašala z začetkom tekme.').catch(() => {});
+      }
+    }
+    prevStartRequestedRef.current = cur;
+  }, [match?.startRequested, match?.matchStarted, userId]);
+
+ 
+  React.useEffect(() => {
+    if (!match) return;
+    const cur = !!match.matchStarted;
+    const prev = prevMatchStartedRef.current;
+    if (prev !== null && !prev && cur) {
+      showLocalNotification('Tekma se začinja!', 'Vsi so potrdili začetek. Dober tek!').catch(() => {});
+    }
+    prevMatchStartedRef.current = cur;
+  }, [match?.matchStarted]);
+
+  
+  React.useEffect(() => {
+    if (!match) return;
+    const cur = match.status === 'closed' && match.cancelReason === 'low_attendance';
+    const prev = prevCancelledRef.current;
+    if (prev !== null && !prev && cur && (match.players ?? []).includes(userId)) {
+      showLocalNotification('Tekma odpovedana', `Tekma ob ${formatTime(match.datetime)} je bila odpovedana — premalo udeležencev.`).catch(() => {});
+    }
+    prevCancelledRef.current = cur;
+  }, [match?.status, match?.cancelReason, userId]);
+
+  async function handleStartMatch() {
+    if (!match) return;
+    setStartBusy(true);
+    try {
+      await requestMatchStart(match.id, userId);
+      
+    } catch (e: any) {
+      Alert.alert('Napaka', e.message ?? 'Ni mogoče začeti tekme.');
+    } finally {
+      setStartBusy(false);
+    }
+  }
+
+  async function handleConsentResponse(response: 'yes' | 'no') {
+    if (!match) return;
+    setStartBusy(true);
+    try {
+      await respondToMatchStart(match.id, userId, response);
+      
+    } catch (e: any) {
+      Alert.alert('Napaka', e.message ?? 'Napaka pri odgovoru.');
+    } finally {
+      setStartBusy(false);
+    }
+  }
 
   const waitlist = match?.waitlist ?? [];
   const isJoined = !!match?.players?.includes(userId);
@@ -206,6 +303,65 @@ export default function MatchDetailsScreen() {
             </View>
           </View>
 
+          {(match.startRequested || match.matchStarted) && (
+            <View style={styles.consentCard}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+                <Ionicons
+                  name={match.matchStarted ? 'checkmark-circle' : 'radio-button-on'}
+                  size={16}
+                  color={match.matchStarted ? '#22c55e' : colors.primaryLight}
+                />
+                <Text style={styles.consentTitle}>
+                  {match.matchStarted ? 'Tekma je začeta!' : 'Potrditev začetka'}
+                </Text>
+              </View>
+              {(match.players ?? []).map(uid => {
+                const consent = match.startConsent?.[uid] ?? 'pending';
+                const name = uid === userId ? 'Ti' : (userNames.get(uid) ?? (uid.length <= 10 ? uid : uid.slice(0, 8)));
+                return (
+                  <View key={uid} style={styles.consentPlayerRow}>
+                    <Text style={styles.consentPlayerName} numberOfLines={1}>{name}</Text>
+                    {consent === 'yes' ? (
+                      <View style={[styles.consentBadge, { backgroundColor: '#22c55e20', borderColor: '#22c55e50' }]}>
+                        <Text style={{ color: '#22c55e', fontSize: 12, fontWeight: '800' }}>✓ DA</Text>
+                      </View>
+                    ) : consent === 'no' ? (
+                      <View style={[styles.consentBadge, { backgroundColor: '#ef444420', borderColor: '#ef444450' }]}>
+                        <Text style={{ color: '#ef4444', fontSize: 12, fontWeight: '800' }}>✗ NE</Text>
+                      </View>
+                    ) : (
+                      <View style={[styles.consentBadge, { backgroundColor: colors.bgElevated, borderColor: colors.border }]}>
+                        <Text style={{ color: colors.textMuted, fontSize: 12, fontWeight: '700' }}>Čakanje</Text>
+                      </View>
+                    )}
+                  </View>
+                );
+              })}
+              {match.startRequested && !match.matchStarted && match.startConsent?.[userId] === 'pending' && (
+                <View style={styles.consentBtnRow}>
+                  <TouchableOpacity
+                    style={[styles.consentDaBtn, startBusy && { opacity: 0.6 }]}
+                    onPress={() => handleConsentResponse('yes')}
+                    disabled={startBusy}
+                    activeOpacity={0.85}
+                  >
+                    <Ionicons name="checkmark" size={18} color="#fff" />
+                    <Text style={{ color: '#fff', fontSize: 14, fontWeight: '800' }}>DA</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.consentNeBtn, startBusy && { opacity: 0.6 }]}
+                    onPress={() => handleConsentResponse('no')}
+                    disabled={startBusy}
+                    activeOpacity={0.85}
+                  >
+                    <Ionicons name="close" size={18} color="#ef4444" />
+                    <Text style={{ color: '#ef4444', fontSize: 14, fontWeight: '800' }}>NE</Text>
+                  </TouchableOpacity>
+                </View>
+              )}
+            </View>
+          )}
+
           {match.isPremium ? (
             <PremiumMatchPanel match={match} userId={userId} userNames={userNames} />
           ) : (
@@ -285,9 +441,33 @@ export default function MatchDetailsScreen() {
             <Text style={styles.fullBtnText}>Tekma končana</Text>
           </View>
         ) : isCreator ? (
-          <View style={styles.fullBtn}>
-            <Text style={styles.fullBtnText}>Ti si ustvarjalec tekme</Text>
-          </View>
+          match.matchStarted ? (
+            <View style={[styles.fullBtn, { flexDirection: 'row', gap: 8, borderColor: '#22c55e40', backgroundColor: '#22c55e10' }]}>
+              <Ionicons name="play-circle" size={20} color="#22c55e" />
+              <Text style={[styles.fullBtnText, { color: '#22c55e' }]}>Tekma je v teku</Text>
+            </View>
+          ) : match.startRequested ? (
+            match.startConsent?.[userId] === 'pending' ? (
+              <View style={[styles.fullBtn, { flexDirection: 'row', gap: 8, borderColor: colors.primaryTint }]}>
+                <Ionicons name="arrow-up" size={18} color={colors.primaryLight} />
+                <Text style={[styles.fullBtnText, { color: colors.primaryLight }]}>Potrdi začetek zgoraj ↑</Text>
+              </View>
+            ) : (
+              <View style={[styles.fullBtn, { flexDirection: 'row', gap: 8 }]}>
+                <ActivityIndicator size="small" color={colors.primaryLight} />
+                <Text style={styles.fullBtnText}>Čakam na soglasje ostalih...</Text>
+              </View>
+            )
+          ) : (
+            <TouchableOpacity style={styles.startBtn} onPress={handleStartMatch} disabled={startBusy} activeOpacity={0.9}>
+              {startBusy ? <ActivityIndicator color="#fff" /> : (
+                <>
+                  <Ionicons name="play" size={20} color="#fff" />
+                  <Text style={styles.startBtnText}>Začni tekmo</Text>
+                </>
+              )}
+            </TouchableOpacity>
+          )
         ) : isJoined ? (
           <TouchableOpacity style={styles.leaveBtn} onPress={handleLeave} disabled={busy}>
             {busy ? <ActivityIndicator color={colors.danger} /> : (

@@ -17,6 +17,7 @@ import GroupsScreen from './src/screens/GroupsScreen';
 import { makeDrawerStyles } from './src/styles/AppStyles';
 import { PremiumProvider, useColors } from './src/context/PremiumContext';
 import { ensureUserDoc } from './src/services/matchService';
+import { registerForPushNotificationsAsync } from './src/services/notificationService';
 
 const Stack = createStackNavigator();
 const Drawer = createDrawerNavigator();
@@ -101,12 +102,16 @@ export default function App() {
   const [user, setUser] = React.useState<any>(undefined);
 
   React.useEffect(() => {
-    return onAuthStateChanged(auth, u => {
+    return onAuthStateChanged(auth, async u => {
       setUser(u);
-      if (u) ensureUserDoc(u.uid, {
-        ...(u.email && { email: u.email }),
-        ...(u.displayName && { displayName: u.displayName }),
-      });
+      if (u) {
+        const patch: Record<string, any> = {};
+        if (u.email) patch.email = u.email;
+        if (u.displayName) patch.displayName = u.displayName;
+        const token = await registerForPushNotificationsAsync();
+        if (token) patch.expoPushToken = token;
+        ensureUserDoc(u.uid, patch);
+      }
     });
   }, []);
 
