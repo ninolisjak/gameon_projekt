@@ -78,7 +78,14 @@ export const makeStyles = (colors: Colors) => StyleSheet.create({
     flex: 1, backgroundColor: colors.bgElevated, borderRadius: 16, padding: 12,
     borderWidth: 1, borderColor: colors.borderSubtle,
   },
-  teamHeader: { color: colors.primaryLight, fontSize: 11, fontWeight: '800', letterSpacing: 1.2, textTransform: 'uppercase', marginBottom: 8 },
+  teamHeaderRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 },
+  teamHeader: { color: colors.primaryLight, fontSize: 11, fontWeight: '800', letterSpacing: 1.2, textTransform: 'uppercase' },
+  teamInviteBtn: {
+    width: 22, height: 22, borderRadius: 11,
+    backgroundColor: colors.bg, borderWidth: 1, borderColor: colors.border,
+    alignItems: 'center', justifyContent: 'center',
+  },
+  teamInviteBtnActive: { borderColor: colors.primary, backgroundColor: colors.primaryTint },
   teamPlayer: {
     flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 6,
   },
@@ -91,6 +98,31 @@ export const makeStyles = (colors: Colors) => StyleSheet.create({
   teamPlayerAttended: { color: colors.success, fontSize: 10, fontWeight: '800' },
   teamPlayerGoals: { color: colors.primaryLight, fontSize: 11, fontWeight: '800', marginRight: 4 },
   teamSwapBtn: { padding: 4 },
+
+  invitePanel: {
+    backgroundColor: colors.bgElevated, borderRadius: 16, padding: 14,
+    borderWidth: 1, borderColor: colors.borderSubtle,
+  },
+  invitePanelTitle: {
+    color: colors.primaryLight, fontSize: 11, fontWeight: '800',
+    letterSpacing: 1.2, textTransform: 'uppercase', marginBottom: 10,
+  },
+  inviteEmpty: { color: colors.textMuted, fontSize: 13, fontStyle: 'italic', textAlign: 'center', paddingVertical: 8 },
+  invitePlayerRow: {
+    flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 7,
+    borderTopWidth: 1, borderTopColor: colors.borderSubtle,
+  },
+  invitePlayerAvatar: {
+    width: 30, height: 30, borderRadius: 15,
+    backgroundColor: colors.primaryTint, alignItems: 'center', justifyContent: 'center',
+  },
+  invitePlayerName: { color: colors.text, fontSize: 13, fontWeight: '600' },
+  invitePlayerStats: { color: colors.textMuted, fontSize: 11, marginTop: 1 },
+  inviteBtn: {
+    backgroundColor: colors.primary, borderRadius: 8,
+    paddingHorizontal: 12, paddingVertical: 6, minWidth: 66, alignItems: 'center',
+  },
+  inviteBtnText: { color: '#fff', fontSize: 11, fontWeight: '800', letterSpacing: 0.3 },
 
   finalizeBtn: {
     backgroundColor: colors.danger, borderRadius: 14,

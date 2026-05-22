@@ -1,9 +1,10 @@
 import React from 'react';
-import { View, Text, TouchableOpacity, Alert, ActivityIndicator } from 'react-native';
+import { View, Text, TouchableOpacity, Alert, ActivityIndicator, ScrollView } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import {
-  Match, proposeGoal, confirmGoal, dismissPendingEvent,
+  Match, UserDoc, proposeGoal, confirmGoal, dismissPendingEvent,
   checkIn, swapTeam, finalizeMatch, requiredConfirmations,
+  fetchInvitablePlayers, invitePlayerToMatch,
 } from '../services/matchService';
 import { useColors } from '../context/PremiumContext';
 import { makeStyles } from '../styles/PremiumMatchPanelStyles';
@@ -26,6 +27,10 @@ export default function PremiumMatchPanel({ match, userId, userNames }: Props) {
   const colors = useColors();
   const styles = React.useMemo(() => makeStyles(colors), [colors]);
   const [busy, setBusy] = React.useState(false);
+  const [inviteTeam, setInviteTeam] = React.useState<'A' | 'B' | null>(null);
+  const [invitablePlayers, setInvitablePlayers] = React.useState<UserDoc[]>([]);
+  const [inviteLoading, setInviteLoading] = React.useState(false);
+  const [invitingId, setInvitingId] = React.useState<string | null>(null);
 
   const isCreator = match.createdBy === userId;
   const isJoined = !!match.players?.includes(userId);
@@ -73,6 +78,35 @@ export default function PremiumMatchPanel({ match, userId, userNames }: Props) {
 
   function handleSwap(playerId: string) {
     withBusy(() => swapTeam(match.id, playerId, userId));
+  }
+
+  async function handleOpenInvite(team: 'A' | 'B') {
+    if (inviteTeam === team) { setInviteTeam(null); return; }
+    setInviteTeam(team);
+    setInviteLoading(true);
+    try {
+      const excluded = [...(match.players ?? []), ...(match.waitlist ?? [])];
+      const players = await fetchInvitablePlayers(200, 20, excluded);
+      setInvitablePlayers(players);
+    } catch {
+      setInvitablePlayers([]);
+    } finally {
+      setInviteLoading(false);
+    }
+  }
+
+  async function handleInvite(uid: string) {
+    if (!inviteTeam) return;
+    setInvitingId(uid);
+    try {
+      await invitePlayerToMatch(match.id, uid, inviteTeam);
+      setInviteTeam(null);
+      setInvitablePlayers([]);
+    } catch (e: any) {
+      Alert.alert('Napaka', e?.message ?? 'Povabilo ni uspelo.');
+    } finally {
+      setInvitingId(null);
+    }
   }
 
   function handleFinalize() {
@@ -128,12 +162,8 @@ export default function PremiumMatchPanel({ match, userId, userNames }: Props) {
             <Ionicons name="person" size={14} color={colors.primaryLight} />
           </View>
           <Text style={styles.teamPlayerName} numberOfLines={1}>{resolveName(uid, userId, userNames)}</Text>
-          {goals > 0 && (
-            <Text style={styles.teamPlayerGoals}>⚽ {goals}</Text>
-          )}
-          {attended ? (
-            <Text style={styles.teamPlayerAttended}>✓</Text>
-          ) : null}
+          {goals > 0 && <Text style={styles.teamPlayerGoals}>⚽ {goals}</Text>}
+          {attended ? <Text style={styles.teamPlayerAttended}>✓</Text> : null}
           {isCreator && !finalized && (
             <TouchableOpacity style={styles.teamSwapBtn} onPress={() => handleSwap(uid)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
               <Ionicons name="swap-horizontal" size={16} color={colors.textMuted} />
@@ -143,18 +173,72 @@ export default function PremiumMatchPanel({ match, userId, userNames }: Props) {
       );
     }
 
+    function renderTeamCard(team: 'A' | 'B') {
+      const players = team === 'A' ? teamA : teamB;
+      const isOpen = inviteTeam === team;
+      return (
+        <View key={team} style={styles.teamCard}>
+          <View style={styles.teamHeaderRow}>
+            <Text style={styles.teamHeader}>Ekipa {team} · {players.length}</Text>
+            {isCreator && !finalized && (
+              <TouchableOpacity
+                style={[styles.teamInviteBtn, isOpen && styles.teamInviteBtnActive]}
+                onPress={() => handleOpenInvite(team)}
+                hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+              >
+                <Ionicons name={isOpen ? 'close' : 'add'} size={14} color={isOpen ? colors.primary : colors.textMuted} />
+              </TouchableOpacity>
+            )}
+          </View>
+          {players.map(renderPlayer)}
+          {players.length === 0 && <Text style={styles.pendingSubText}>Ni igralcev</Text>}
+        </View>
+      );
+    }
+
     return (
-      <View style={styles.teamsRow}>
-        <View style={styles.teamCard}>
-          <Text style={styles.teamHeader}>Ekipa A · {teamA.length}</Text>
-          {teamA.map(renderPlayer)}
-          {teamA.length === 0 && <Text style={styles.pendingSubText}>Ni igralcev</Text>}
+      <View style={{ gap: 12 }}>
+        <View style={styles.teamsRow}>
+          {renderTeamCard('A')}
+          {renderTeamCard('B')}
         </View>
-        <View style={styles.teamCard}>
-          <Text style={styles.teamHeader}>Ekipa B · {teamB.length}</Text>
-          {teamB.map(renderPlayer)}
-          {teamB.length === 0 && <Text style={styles.pendingSubText}>Ni igralcev</Text>}
-        </View>
+
+        {inviteTeam !== null && (
+          <View style={styles.invitePanel}>
+            <Text style={styles.invitePanelTitle}>Povabi v Ekipo {inviteTeam}</Text>
+            {inviteLoading ? (
+              <ActivityIndicator color={colors.primary} style={{ marginVertical: 12 }} />
+            ) : invitablePlayers.length === 0 ? (
+              <Text style={styles.inviteEmpty}>Ni ustreznih igralcev (ELO &gt; 200, reputacija &gt; 20)</Text>
+            ) : (
+              invitablePlayers.map(u => {
+                const name = u.displayName || (u.email ? u.email.split('@')[0] : u.uid.slice(0, 8));
+                const isInviting = invitingId === u.uid;
+                return (
+                  <View key={u.uid} style={styles.invitePlayerRow}>
+                    <View style={styles.invitePlayerAvatar}>
+                      <Ionicons name="person" size={14} color={colors.primaryLight} />
+                    </View>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.invitePlayerName} numberOfLines={1}>{name}</Text>
+                      <Text style={styles.invitePlayerStats}>ELO {u.elo} · Rep {u.reputation}</Text>
+                    </View>
+                    <TouchableOpacity
+                      style={[styles.inviteBtn, isInviting && { opacity: 0.5 }]}
+                      onPress={() => handleInvite(u.uid)}
+                      disabled={invitingId !== null}
+                      activeOpacity={0.85}
+                    >
+                      {isInviting
+                        ? <ActivityIndicator size="small" color="#fff" />
+                        : <Text style={styles.inviteBtnText}>POVABI</Text>}
+                    </TouchableOpacity>
+                  </View>
+                );
+              })
+            )}
+          </View>
+        )}
       </View>
     );
   }

@@ -718,6 +718,45 @@ export async function finalizeMatch(matchId: string, requesterId: string) {
   return { result, perPlayer: updates };
 }
 
+// ── Invite eligible players ───────────────────────────────────────────────────
+
+export async function fetchInvitablePlayers(
+  minElo: number,
+  minRep: number,
+  excludeIds: string[],
+): Promise<UserDoc[]> {
+  const q = query(collection(db, 'users'), where('elo', '>=', minElo));
+  const snap = await getDocs(q);
+  return snap.docs
+    .map(d => ({ ...d.data(), uid: d.id } as UserDoc))
+    .filter(u => (u.reputation ?? 0) > minRep && !excludeIds.includes(u.uid));
+}
+
+export async function invitePlayerToMatch(
+  matchId: string,
+  targetUserId: string,
+  team: 'A' | 'B',
+): Promise<void> {
+  const ref = doc(db, 'matches', matchId);
+  await runTransaction(db, async tx => {
+    const snap = await tx.get(ref);
+    if (!snap.exists()) throw new Error('Tekma ne obstaja.');
+    const data = snap.data() as Match;
+    if (data.players?.includes(targetUserId)) throw new Error('Igralec je že prijavljen.');
+    if (data.waitlist?.includes(targetUserId)) throw new Error('Igralec je že na čakalni vrsti.');
+
+    const newFilled = data.filledSpots + 1;
+    const teamField = team === 'A' ? 'teamA' : 'teamB';
+    const currentTeam = (data[teamField] ?? []) as string[];
+    tx.update(ref, {
+      players: arrayUnion(targetUserId),
+      filledSpots: increment(1),
+      status: newFilled >= data.totalSpots ? 'full' : 'open',
+      [teamField]: [...currentTeam, targetUserId],
+    });
+  });
+}
+
 // ── Start-consent flow ────────────────────────────────────────────────────────
 
 export async function requestMatchStart(matchId: string, creatorId: string): Promise<string[]> {
