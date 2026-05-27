@@ -1,13 +1,50 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    match /matches/{matchId} {
-      allow read: if true;
-      allow create: if request.auth != null;
-      allow update: if request.auth != null;
+
+    // Users - vsak vidi samo sebe + subcollections (reputationLog, matchHistory)
+    match /users/{uid} {
+      allow read, write: if request.auth != null && request.auth.uid == uid;
+      match /{sub}/{docId} {
+        allow read, write: if request.auth != null && request.auth.uid == uid;
+      }
     }
-    match /users/{userId} {
-      allow read, write: if request.auth.uid == userId;
+
+    // Matches - vsi prijavljeni berejo, kdorkoli ustvari, update dovoljen vsem
+    match /matches/{matchId} {
+      allow read: if request.auth != null;
+      allow create: if request.auth != null
+        && request.resource.data.hostId == request.auth.uid;
+      allow update: if request.auth != null;
+      allow delete: if request.auth != null
+        && resource.data.hostId == request.auth.uid;
+    }
+
+    // Venues - javno branje, pisanje samo lastnik
+    match /venues/{venueId} {
+      allow read: if true;
+      allow create: if request.auth != null
+        && request.resource.data.ownerId == request.auth.uid;
+      allow update, delete: if request.auth != null
+        && resource.data.ownerId == request.auth.uid;
+
+      // Schedule slots - javno branje, pisanje samo lastnik igrišča
+      match /schedule/{slotId} {
+        allow read: if true;
+        allow write: if request.auth != null
+          && get(/databases/$(database)/documents/venues/$(venueId)).data.ownerId == request.auth.uid;
+      }
+    }
+
+    // Reservations - mobilna aplikacija ustvarja, lastnik igrišča in booker bereta
+    match /reservations/{resId} {
+      allow read: if request.auth != null
+        && (resource.data.bookedBy == request.auth.uid
+            || resource.data.ownerId == request.auth.uid);
+      allow create: if request.auth != null;
+      allow update: if request.auth != null
+        && (resource.data.bookedBy == request.auth.uid
+            || resource.data.ownerId == request.auth.uid);
     }
   }
 }
