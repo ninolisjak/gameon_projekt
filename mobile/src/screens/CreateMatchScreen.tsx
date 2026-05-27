@@ -1,6 +1,9 @@
 import React from 'react';
-import { View, Text, TextInput, TouchableOpacity, ScrollView, Alert, ActivityIndicator, StatusBar, Switch } from 'react-native';
+import { View, Text, TextInput, TouchableOpacity, ScrollView, Alert, ActivityIndicator, StatusBar, Switch, Modal, Platform } from 'react-native';
+import { WebView } from 'react-native-webview';
 import { Ionicons } from '@expo/vector-icons';
+import DateTimePicker from '@react-native-community/datetimepicker';
+import * as Location from 'expo-location';
 import { useNavigation } from '@react-navigation/native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { auth } from '../config/firebase';
@@ -18,41 +21,124 @@ export default function CreateMatchScreen() {
   const [isPrivate, setIsPrivate] = React.useState(false);
   const [isRecurring, setIsRecurring] = React.useState(false);
   const [locationName, setLocationName] = React.useState('');
-  const [lat, setLat] = React.useState('46.5547');
-  const [lng, setLng] = React.useState('15.6459');
+  const [lat, setLat] = React.useState(46.5547);
+  const [lng, setLng] = React.useState(15.6459);
   const [totalSpots, setTotalSpots] = React.useState(10);
-  const [date, setDate] = React.useState('');
-  const [time, setTime] = React.useState('');
+  const [datetime, setDatetime] = React.useState<Date>(() => {
+    const d = new Date();
+    d.setDate(d.getDate() + 1);
+    d.setHours(18, 0, 0, 0);
+    return d;
+  });
+  const [showDatePicker, setShowDatePicker] = React.useState(false);
+  const [showTimePicker, setShowTimePicker] = React.useState(false);
+  const [showMapPicker, setShowMapPicker] = React.useState(false);
+  const [pendingLat, setPendingLat] = React.useState(46.5547);
+  const [pendingLng, setPendingLng] = React.useState(15.6459);
   const [loading, setLoading] = React.useState(false);
+  const webViewRef = React.useRef<WebView>(null);
 
   function changeSpots(delta: number) {
     setTotalSpots(prev => Math.max(2, Math.min(30, prev + delta)));
   }
 
+  function formatDateLabel(d: Date): string {
+    return d.toLocaleDateString('sl-SI', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' });
+  }
+  function formatTimeLabel(d: Date): string {
+    return d.toLocaleTimeString('sl-SI', { hour: '2-digit', minute: '2-digit' });
+  }
+
+  async function openMapPicker() {
+    setPendingLat(lat);
+    setPendingLng(lng);
+    setShowMapPicker(true);
+    try {
+      const { status } = await Location.requestForegroundPermissionsAsync();
+      if (status === 'granted') {
+        const pos = await Location.getCurrentPositionAsync({});
+        setPendingLat(pos.coords.latitude);
+        setPendingLng(pos.coords.longitude);
+      }
+    } catch { /* user location optional */ }
+  }
+
+  function confirmMapPick() {
+    setLat(pendingLat);
+    setLng(pendingLng);
+    setShowMapPicker(false);
+  }
+
+  function onDateChange(_e: any, selected?: Date) {
+    if (Platform.OS === 'android') setShowDatePicker(false);
+    if (selected) {
+      const next = new Date(datetime);
+      next.setFullYear(selected.getFullYear(), selected.getMonth(), selected.getDate());
+      setDatetime(next);
+    }
+  }
+
+  function onTimeChange(_e: any, selected?: Date) {
+    if (Platform.OS === 'android') setShowTimePicker(false);
+    if (selected) {
+      const next = new Date(datetime);
+      next.setHours(selected.getHours(), selected.getMinutes(), 0, 0);
+      setDatetime(next);
+    }
+  }
+
+  const mapHtml = React.useMemo(() => `
+<!DOCTYPE html><html><head>
+<meta charset="utf-8" />
+<meta name="viewport" content="initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<style>html,body,#map{margin:0;padding:0;height:100%;width:100%;background:#0a0a0a;}</style>
+</head><body>
+<div id="map"></div>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+  const initLat = ${pendingLat};
+  const initLng = ${pendingLng};
+  const map = L.map('map').setView([initLat, initLng], 14);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    maxZoom: 19, attribution: '© OSM'
+  }).addTo(map);
+  let marker = L.marker([initLat, initLng], { draggable: true }).addTo(map);
+  function post(lat, lng) {
+    window.ReactNativeWebView.postMessage(JSON.stringify({ lat, lng }));
+  }
+  marker.on('dragend', e => { const p = e.target.getLatLng(); post(p.lat, p.lng); });
+  map.on('click', e => { marker.setLatLng(e.latlng); post(e.latlng.lat, e.latlng.lng); });
+  window.recenter = function(lat, lng) {
+    map.setView([lat, lng], 15);
+    marker.setLatLng([lat, lng]);
+  };
+</script>
+</body></html>`, [showMapPicker]);
+
+  React.useEffect(() => {
+    if (showMapPicker && webViewRef.current) {
+      webViewRef.current.injectJavaScript(`window.recenter && window.recenter(${pendingLat}, ${pendingLng}); true;`);
+    }
+  }, [pendingLat, pendingLng]);
+
   async function handleCreate() {
-    if (!locationName.trim() || !date || !time) {
-      Alert.alert('Manjkajo podatki', 'Izpolni lokacijo, datum in čas.');
+    if (!locationName.trim()) {
+      Alert.alert('Manjkajo podatki', 'Vnesi ime lokacije.');
       return;
     }
-    const datetime = new Date(`${date}T${time}:00`);
-    if (isNaN(datetime.getTime())) {
-      Alert.alert('Napačen format', 'Datum: YYYY-MM-DD, Čas: HH:MM.');
-      return;
-    }
-    const latNum = parseFloat(lat);
-    const lngNum = parseFloat(lng);
-    if (isNaN(latNum) || isNaN(lngNum)) {
-      Alert.alert('Napačne koordinate', 'Latitude in longitude morata biti številki.');
+    if (datetime.getTime() < Date.now()) {
+      Alert.alert('Napačen čas', 'Datum/čas tekme mora biti v prihodnosti.');
       return;
     }
     setLoading(true);
     try {
-      const payload = { 
-        sport, 
-        lat: latNum, 
-        lng: lngNum, 
+      const payload = {
+        sport,
+        lat,
+        lng,
         locationName: locationName.trim(),
-        datetime, 
+        datetime,
         totalSpots,
         createdBy: auth.currentUser?.uid ?? 'anon'
       };
@@ -137,28 +223,31 @@ export default function CreateMatchScreen() {
                   />
                 </View>
               </View>
-              <View style={styles.grid2}>
-                <View style={styles.half}>
-                  <Text style={styles.fieldLabel}>Latitude</Text>
-                  <TextInput
-                    style={styles.input}
-                    keyboardType="decimal-pad"
-                    placeholderTextColor={colors.textFaint}
-                    value={lat}
-                    onChangeText={setLat}
-                  />
+              <TouchableOpacity
+                onPress={openMapPicker}
+                activeOpacity={0.85}
+                style={{
+                  flexDirection: 'row', alignItems: 'center', gap: 10,
+                  padding: 14, borderRadius: 12,
+                  backgroundColor: colors.bgElevated,
+                  borderWidth: 1, borderColor: colors.border,
+                }}
+              >
+                <View style={{
+                  width: 38, height: 38, borderRadius: 19,
+                  backgroundColor: colors.primary + '20',
+                  alignItems: 'center', justifyContent: 'center',
+                }}>
+                  <Ionicons name="map" size={18} color={colors.primaryLight} />
                 </View>
-                <View style={styles.half}>
-                  <Text style={styles.fieldLabel}>Longitude</Text>
-                  <TextInput
-                    style={styles.input}
-                    keyboardType="decimal-pad"
-                    placeholderTextColor={colors.textFaint}
-                    value={lng}
-                    onChangeText={setLng}
-                  />
+                <View style={{ flex: 1 }}>
+                  <Text style={{ color: colors.text, fontWeight: '700', fontSize: 13 }}>Izberi na zemljevidu</Text>
+                  <Text style={{ color: colors.textMuted, fontSize: 11, marginTop: 2 }}>
+                    {lat.toFixed(5)}, {lng.toFixed(5)}
+                  </Text>
                 </View>
-              </View>
+                <Ionicons name="chevron-forward" size={18} color={colors.textMuted} />
+              </TouchableOpacity>
             </View>
           </View>
 
@@ -168,32 +257,50 @@ export default function CreateMatchScreen() {
               <View style={styles.grid2}>
                 <View style={styles.half}>
                   <Text style={styles.fieldLabel}>Datum</Text>
-                  <View style={styles.inputWithIcon}>
+                  <TouchableOpacity
+                    onPress={() => setShowDatePicker(true)}
+                    activeOpacity={0.85}
+                    style={styles.inputWithIcon}
+                  >
                     <Ionicons name="calendar-outline" size={16} color={colors.textMuted} style={styles.inputIcon} />
-                    <TextInput
-                      style={styles.inputFlex}
-                      placeholder="2026-05-15"
-                      placeholderTextColor={colors.textFaint}
-                      value={date}
-                      onChangeText={setDate}
-                    />
-                  </View>
+                    <Text style={[styles.inputFlex, { color: colors.text, paddingVertical: 12 }]}>
+                      {formatDateLabel(datetime)}
+                    </Text>
+                  </TouchableOpacity>
                 </View>
                 <View style={styles.half}>
                   <Text style={styles.fieldLabel}>Čas</Text>
-                  <View style={styles.inputWithIcon}>
+                  <TouchableOpacity
+                    onPress={() => setShowTimePicker(true)}
+                    activeOpacity={0.85}
+                    style={styles.inputWithIcon}
+                  >
                     <Ionicons name="time-outline" size={16} color={colors.textMuted} style={styles.inputIcon} />
-                    <TextInput
-                      style={styles.inputFlex}
-                      placeholder="18:00"
-                      placeholderTextColor={colors.textFaint}
-                      value={time}
-                      onChangeText={setTime}
-                    />
-                  </View>
+                    <Text style={[styles.inputFlex, { color: colors.text, paddingVertical: 12 }]}>
+                      {formatTimeLabel(datetime)}
+                    </Text>
+                  </TouchableOpacity>
                 </View>
               </View>
             </View>
+            {showDatePicker && (
+              <DateTimePicker
+                value={datetime}
+                mode="date"
+                minimumDate={new Date()}
+                display={Platform.OS === 'ios' ? 'spinner' : 'default'}
+                onChange={onDateChange}
+              />
+            )}
+            {showTimePicker && (
+              <DateTimePicker
+                value={datetime}
+                mode="time"
+                is24Hour
+                display={Platform.OS === 'ios' ? 'spinner' : 'default'}
+                onChange={onTimeChange}
+              />
+            )}
           </View>
 
           <View>
@@ -301,6 +408,60 @@ export default function CreateMatchScreen() {
           )}
         </TouchableOpacity>
       </View>
+
+      <Modal visible={showMapPicker} animationType="slide" onRequestClose={() => setShowMapPicker(false)}>
+        <SafeAreaView style={{ flex: 1, backgroundColor: colors.bg }} edges={['top']}>
+          <View style={{
+            flexDirection: 'row', alignItems: 'center',
+            padding: 12, gap: 12,
+            backgroundColor: colors.primary,
+          }}>
+            <TouchableOpacity onPress={() => setShowMapPicker(false)} style={{ padding: 6 }}>
+              <Ionicons name="close" size={22} color="#fff" />
+            </TouchableOpacity>
+            <View style={{ flex: 1 }}>
+              <Text style={{ color: '#fff', fontWeight: '800', fontSize: 15 }}>Izberi lokacijo</Text>
+              <Text style={{ color: '#ffffffcc', fontSize: 11 }}>Tapni na zemljevid ali povleci marker</Text>
+            </View>
+          </View>
+          <WebView
+            ref={webViewRef}
+            originWhitelist={['*']}
+            source={{ html: mapHtml }}
+            onMessage={e => {
+              try {
+                const { lat: la, lng: ln } = JSON.parse(e.nativeEvent.data);
+                if (typeof la === 'number' && typeof ln === 'number') {
+                  setPendingLat(la);
+                  setPendingLng(ln);
+                }
+              } catch { /* ignore */ }
+            }}
+            style={{ flex: 1 }}
+          />
+          <View style={{
+            padding: 16, gap: 8,
+            backgroundColor: colors.bgElevated,
+            borderTopWidth: 1, borderTopColor: colors.border,
+          }}>
+            <Text style={{ color: colors.textMuted, fontSize: 12 }}>
+              Izbrano: <Text style={{ color: colors.text, fontWeight: '700' }}>{pendingLat.toFixed(5)}, {pendingLng.toFixed(5)}</Text>
+            </Text>
+            <TouchableOpacity
+              onPress={confirmMapPick}
+              activeOpacity={0.9}
+              style={{
+                flexDirection: 'row', justifyContent: 'center', alignItems: 'center', gap: 8,
+                paddingVertical: 14, borderRadius: 12,
+                backgroundColor: colors.primary,
+              }}
+            >
+              <Ionicons name="checkmark" size={20} color="#fff" />
+              <Text style={{ color: '#fff', fontWeight: '800', fontSize: 15 }}>Potrdi lokacijo</Text>
+            </TouchableOpacity>
+          </View>
+        </SafeAreaView>
+      </Modal>
     </View>
   );
 }

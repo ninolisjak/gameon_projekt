@@ -8,7 +8,7 @@ import { makeStyles } from '../styles/ProfileScreenStyles';
 import { useColors, usePremium } from '../context/PremiumContext';
 import {
   ensureUserDoc, subscribeUserDoc, PlayerPosition, FutsalPosition, BasketballPosition,
-  ReputationEntry,
+  ReputationEntry, MatchHistoryEntry, getMatchHistory, MatchOutcome,
 } from '../services/matchService';
 import { getReputationHistory, reasonLabel } from '../services/reputationService';
 
@@ -51,6 +51,13 @@ function formatDate(ts: any): string {
   return d.toLocaleDateString('sl-SI', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
 }
 
+const OUTCOME_META: Record<MatchOutcome, { label: string; color: string; icon: string }> = {
+  win: { label: 'Zmaga', color: '#22c55e', icon: 'trophy' },
+  loss: { label: 'Poraz', color: '#ef4444', icon: 'close-circle' },
+  draw: { label: 'Neodločeno', color: '#eab308', icon: 'remove-circle' },
+  no_show: { label: 'Neudeležba', color: '#9ca3af', icon: 'alert-circle' },
+};
+
 export default function ProfileScreen() {
   const navigation = useNavigation<any>();
   const colors = useColors();
@@ -65,6 +72,9 @@ export default function ProfileScreen() {
   const [history, setHistory] = React.useState<ReputationEntry[]>([]);
   const [historyLoading, setHistoryLoading] = React.useState(false);
   const [savingPos, setSavingPos] = React.useState(false);
+  const [matches, setMatches] = React.useState<MatchHistoryEntry[]>([]);
+  const [matchesLoading, setMatchesLoading] = React.useState(false);
+  const [matchesExpanded, setMatchesExpanded] = React.useState(false);
 
   React.useEffect(() => {
     const uid = auth.currentUser?.uid;
@@ -90,6 +100,15 @@ export default function ProfileScreen() {
       .then(setHistory)
       .finally(() => setHistoryLoading(false));
   }, [reputation, isPremium]);
+
+  React.useEffect(() => {
+    const uid = auth.currentUser?.uid;
+    if (!uid || !isPremium) return;
+    setMatchesLoading(true);
+    getMatchHistory(uid, 20)
+      .then(setMatches)
+      .finally(() => setMatchesLoading(false));
+  }, [elo, isPremium]);
 
   async function handleSelectPosition(pos: PlayerPosition) {
     const uid = auth.currentUser?.uid;
@@ -252,6 +271,78 @@ export default function ProfileScreen() {
                 );
               })}
             </View>
+          </View>
+
+          <View style={{ marginTop: 16 }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+              <Text style={styles.sectionLabel}>Zgodovina tekem</Text>
+              {matches.length > 3 && (
+                <TouchableOpacity onPress={() => setMatchesExpanded(v => !v)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                  <Text style={{ color: colors.primaryLight, fontSize: 12, fontWeight: '700' }}>
+                    {matchesExpanded ? 'Skrij' : `Prikaži vse (${matches.length})`}
+                  </Text>
+                </TouchableOpacity>
+              )}
+            </View>
+            {matchesLoading ? (
+              <Text style={{ color: colors.textMuted, fontSize: 12, padding: 12 }}>Nalaganje...</Text>
+            ) : matches.length === 0 ? (
+              <View style={{ padding: 16, borderRadius: 12, backgroundColor: colors.bgElevated, borderWidth: 1, borderColor: colors.border }}>
+                <Text style={{ color: colors.textMuted, fontSize: 12, textAlign: 'center' }}>
+                  Še nimaš odigranih Premium tekem.
+                </Text>
+              </View>
+            ) : (
+              <View style={{ gap: 6 }}>
+                {(matchesExpanded ? matches : matches.slice(0, 3)).map(m => {
+                  const meta = OUTCOME_META[m.outcome];
+                  const eloPositive = m.eloDelta > 0;
+                  const eloNeutral = m.eloDelta === 0;
+                  const eloColor = eloNeutral ? colors.textMuted : eloPositive ? '#22c55e' : '#ef4444';
+                  return (
+                    <View key={m.id} style={{
+                      flexDirection: 'row', alignItems: 'center', gap: 10,
+                      padding: 10, borderRadius: 10,
+                      backgroundColor: colors.bgElevated,
+                      borderWidth: 1, borderColor: colors.border,
+                      borderLeftWidth: 3, borderLeftColor: meta.color,
+                    }}>
+                      <View style={{
+                        width: 36, height: 36, borderRadius: 18,
+                        backgroundColor: meta.color + '20',
+                        alignItems: 'center', justifyContent: 'center',
+                      }}>
+                        <Ionicons name={meta.icon as any} size={16} color={meta.color} />
+                      </View>
+                      <View style={{ flex: 1 }}>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                          <Text style={{ color: colors.text, fontWeight: '800', fontSize: 13 }}>
+                            {meta.label}
+                          </Text>
+                          <Text style={{ color: colors.textMuted, fontSize: 11 }}>
+                            · {m.scoreA} - {m.scoreB} ({m.team === 'A' ? 'Ekipa A' : 'Ekipa B'})
+                          </Text>
+                          {m.goals > 0 && (
+                            <Text style={{ color: colors.textMuted, fontSize: 11 }}>· ⚽ {m.goals}</Text>
+                          )}
+                        </View>
+                        <Text style={{ color: colors.textMuted, fontSize: 11, marginTop: 2 }} numberOfLines={1}>
+                          {m.locationName || (m.sport === 'futsal' ? 'Futsal' : 'Košarka')} · {formatDate(m.datetime)}
+                        </Text>
+                      </View>
+                      <View style={{ alignItems: 'flex-end' }}>
+                        <Text style={{ color: eloColor, fontWeight: '900', fontSize: 14 }}>
+                          {eloPositive ? '+' : ''}{m.eloDelta}
+                        </Text>
+                        <Text style={{ color: colors.textMuted, fontSize: 10 }}>
+                          ELO {m.eloAfter}
+                        </Text>
+                      </View>
+                    </View>
+                  );
+                })}
+              </View>
+            )}
           </View>
 
           <View style={{ marginTop: 16 }}>

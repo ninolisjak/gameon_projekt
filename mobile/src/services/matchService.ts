@@ -1,7 +1,7 @@
 import {
   collection, addDoc, Timestamp, doc, updateDoc, setDoc,
   arrayUnion, arrayRemove, increment, onSnapshot, getDoc,
-  runTransaction, query, where, getDocs
+  runTransaction, query, where, getDocs, orderBy, limit,
 } from 'firebase/firestore';
 import { db } from '../config/firebase';
 import { balanceTeams, userToBalanceInput, BalanceInput } from './teamBalancer';
@@ -66,6 +66,25 @@ export type BalanceMeta = {
 };
 
 export type ReputationReason = 'attended' | 'no_show' | 'late_cancel' | 'on_time_cancel' | 'manual';
+
+export type MatchOutcome = 'win' | 'loss' | 'draw' | 'no_show';
+
+export type MatchHistoryEntry = {
+  id: string;
+  matchId: string;
+  sport: 'futsal' | 'basketball';
+  locationName: string;
+  datetime: any;
+  team: 'A' | 'B';
+  scoreA: number;
+  scoreB: number;
+  outcome: MatchOutcome;
+  goals: number;
+  eloBefore: number;
+  eloDelta: number;
+  eloAfter: number;
+  createdAt?: any;
+};
 
 export type ReputationEntry = {
   id: string;
@@ -780,6 +799,27 @@ export async function finalizeMatch(matchId: string, requesterId: string) {
       else if (u.isDraw) userPatch.draws = increment(1);
       await setDoc(userRef, userPatch, { merge: true });
       await applyReputationChange(u.uid, u.dRep, u.repReason, matchId);
+
+      const eloBefore = userDocs.find(d => d.uid === u.uid)?.elo ?? STARTING_ELO;
+      const team: 'A' | 'B' = teamA.includes(u.uid) ? 'A' : 'B';
+      const outcome: MatchOutcome =
+        u.repReason === 'no_show' ? 'no_show' :
+        u.isWin ? 'win' : u.isLoss ? 'loss' : 'draw';
+      const historyEntry: Omit<MatchHistoryEntry, 'id'> = {
+        matchId,
+        sport: data.sport,
+        locationName: data.location?.name ?? '',
+        datetime: data.datetime,
+        team,
+        scoreA, scoreB,
+        outcome,
+        goals: u.goals,
+        eloBefore,
+        eloDelta: u.dElo,
+        eloAfter: u.newElo,
+        createdAt: Timestamp.now(),
+      };
+      await addDoc(collection(db, 'users', u.uid, 'matchHistory'), historyEntry);
     })
   );
 
@@ -1085,6 +1125,19 @@ export async function ensureUserDoc(uid: string, patch?: Partial<UserDoc>) {
     }
   } catch (e) {
     console.warn('ensureUserDoc failed (no Firestore?)', e);
+  }
+}
+
+export async function getMatchHistory(uid: string, max = 20): Promise<MatchHistoryEntry[]> {
+  if (uid.length <= 10) return [];
+  try {
+    const ref = collection(db, 'users', uid, 'matchHistory');
+    const qq = query(ref, orderBy('createdAt', 'desc'), limit(max));
+    const snap = await getDocs(qq);
+    return snap.docs.map(d => ({ ...(d.data() as Omit<MatchHistoryEntry, 'id'>), id: d.id }));
+  } catch (e) {
+    console.warn('getMatchHistory failed', e);
+    return [];
   }
 }
 
