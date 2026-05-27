@@ -5,6 +5,7 @@ import {
   Match, UserDoc, proposeGoal, confirmGoal, dismissPendingEvent,
   checkIn, swapTeam, finalizeMatch, requiredConfirmations,
   fetchInvitablePlayers, invitePlayerToMatch, regenerateTeams,
+  resolveUserProfiles, suggestMissingPosition, PlayerPosition,
 } from '../services/matchService';
 import { useColors } from '../context/PremiumContext';
 import { makeStyles } from '../styles/PremiumMatchPanelStyles';
@@ -23,6 +24,24 @@ function resolveName(uid: string, viewerId: string, userNames?: Map<string, stri
   return uid.slice(0, 8);
 }
 
+const POSITION_LABEL: Record<PlayerPosition, string> = {
+  goalkeeper: 'Vratar',
+  defender: 'Branilec',
+  midfielder: 'Vezist',
+  forward: 'Napadalec',
+  guard: 'Guard',
+  center: 'Center',
+};
+
+const POSITION_SHORT: Record<PlayerPosition, string> = {
+  goalkeeper: 'GK',
+  defender: 'DEF',
+  midfielder: 'MID',
+  forward: 'FWD',
+  guard: 'G',
+  center: 'C',
+};
+
 export default function PremiumMatchPanel({ match, userId, userNames }: Props) {
   const colors = useColors();
   const styles = React.useMemo(() => makeStyles(colors), [colors]);
@@ -31,6 +50,15 @@ export default function PremiumMatchPanel({ match, userId, userNames }: Props) {
   const [invitablePlayers, setInvitablePlayers] = React.useState<UserDoc[]>([]);
   const [inviteLoading, setInviteLoading] = React.useState(false);
   const [invitingId, setInvitingId] = React.useState<string | null>(null);
+  const [profiles, setProfiles] = React.useState<Map<string, { elo: number; reputation: number; position?: PlayerPosition }>>(new Map());
+  const [targetPosition, setTargetPosition] = React.useState<PlayerPosition | undefined>(undefined);
+
+  React.useEffect(() => {
+    const uids = [...(match.teamA ?? []), ...(match.teamB ?? []), ...(match.players ?? [])];
+    const unique = [...new Set(uids)];
+    if (unique.length === 0) return;
+    resolveUserProfiles(unique).then(setProfiles);
+  }, [match.teamA?.join(','), match.teamB?.join(','), match.players?.join(',')]);
 
   const isCreator = match.createdBy === userId;
   const isJoined = !!match.players?.includes(userId);
@@ -103,12 +131,21 @@ export default function PremiumMatchPanel({ match, userId, userNames }: Props) {
   }
 
   async function handleOpenInvite(team: 'A' | 'B') {
-    if (inviteTeam === team) { setInviteTeam(null); return; }
+    if (inviteTeam === team) { setInviteTeam(null); setTargetPosition(undefined); return; }
     setInviteTeam(team);
     setInviteLoading(true);
     try {
+      const teamPlayers = (team === 'A' ? match.teamA : match.teamB) ?? [];
+      const teamTargetSize = Math.floor(match.totalSpots / 2);
+      const teamProfiles = teamPlayers.map(uid => ({ uid, position: profiles.get(uid)?.position }));
+      const missing = suggestMissingPosition(match.sport, teamProfiles, teamTargetSize);
+      setTargetPosition(missing);
+
       const excluded = [...(match.players ?? []), ...(match.waitlist ?? [])];
-      const players = await fetchInvitablePlayers(200, 20, excluded);
+      const players = await fetchInvitablePlayers(200, 20, excluded, {
+        desiredPosition: missing,
+        sport: match.sport,
+      });
       setInvitablePlayers(players);
     } catch {
       setInvitablePlayers([]);
@@ -178,12 +215,29 @@ export default function PremiumMatchPanel({ match, userId, userNames }: Props) {
     function renderPlayer(uid: string, _idx: number) {
       const attended = match.attended?.includes(uid);
       const goals = goalsByPlayer[uid] ?? 0;
+      const prof = profiles.get(uid);
       return (
         <View key={uid} style={styles.teamPlayer}>
           <View style={styles.teamPlayerAvatar}>
             <Ionicons name="person" size={14} color={colors.primaryLight} />
           </View>
-          <Text style={styles.teamPlayerName} numberOfLines={1}>{resolveName(uid, userId, userNames)}</Text>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.teamPlayerName} numberOfLines={1}>{resolveName(uid, userId, userNames)}</Text>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 2 }}>
+              {prof && (
+                <Text style={{ color: colors.textMuted, fontSize: 10, fontWeight: '700' }}>
+                  ELO {prof.elo}
+                </Text>
+              )}
+              {prof?.position && (
+                <View style={{ paddingHorizontal: 5, paddingVertical: 1, borderRadius: 4, backgroundColor: colors.primary + '20' }}>
+                  <Text style={{ color: colors.primaryLight, fontSize: 9, fontWeight: '800' }}>
+                    {POSITION_SHORT[prof.position]}
+                  </Text>
+                </View>
+              )}
+            </View>
+          </View>
           {goals > 0 && <Text style={styles.teamPlayerGoals}>⚽ {goals}</Text>}
           {attended ? <Text style={styles.teamPlayerAttended}>✓</Text> : null}
           {isCreator && !finalized && (
@@ -288,22 +342,48 @@ export default function PremiumMatchPanel({ match, userId, userNames }: Props) {
         {inviteTeam !== null && (
           <View style={styles.invitePanel}>
             <Text style={styles.invitePanelTitle}>Povabi v Ekipo {inviteTeam}</Text>
+            {targetPosition && (
+              <View style={{
+                flexDirection: 'row', alignItems: 'center', gap: 8,
+                padding: 10, borderRadius: 10, marginBottom: 10,
+                backgroundColor: colors.primary + '15',
+                borderWidth: 1, borderColor: colors.primary + '40',
+              }}>
+                <Ionicons name="search" size={14} color={colors.primaryLight} />
+                <Text style={{ color: colors.primaryLight, fontSize: 12, fontWeight: '700', flex: 1 }}>
+                  Iščem: {POSITION_LABEL[targetPosition]} (manjka v ekipi)
+                </Text>
+              </View>
+            )}
             {inviteLoading ? (
               <ActivityIndicator color={colors.primary} style={{ marginVertical: 12 }} />
             ) : invitablePlayers.length === 0 ? (
               <Text style={styles.inviteEmpty}>Ni ustreznih igralcev (ELO &gt; 200, reputacija &gt; 20)</Text>
             ) : (
-              invitablePlayers.map(u => {
+              invitablePlayers.slice(0, 8).map(u => {
                 const name = u.displayName || (u.email ? u.email.split('@')[0] : u.uid.slice(0, 8));
                 const isInviting = invitingId === u.uid;
+                const matchesPos = targetPosition && u.position === targetPosition;
                 return (
-                  <View key={u.uid} style={styles.invitePlayerRow}>
+                  <View key={u.uid} style={[
+                    styles.invitePlayerRow,
+                    matchesPos && { borderWidth: 1, borderColor: colors.primary + '60', backgroundColor: colors.primary + '08' },
+                  ]}>
                     <View style={styles.invitePlayerAvatar}>
                       <Ionicons name="person" size={14} color={colors.primaryLight} />
                     </View>
                     <View style={{ flex: 1 }}>
-                      <Text style={styles.invitePlayerName} numberOfLines={1}>{name}</Text>
-                      <Text style={styles.invitePlayerStats}>ELO {u.elo} · Rep {u.reputation}</Text>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                        <Text style={styles.invitePlayerName} numberOfLines={1}>{name}</Text>
+                        {matchesPos && (
+                          <View style={{ paddingHorizontal: 5, paddingVertical: 1, borderRadius: 4, backgroundColor: colors.primary }}>
+                            <Text style={{ color: '#fff', fontSize: 9, fontWeight: '900' }}>USTREZNA POZ</Text>
+                          </View>
+                        )}
+                      </View>
+                      <Text style={styles.invitePlayerStats}>
+                        ELO {u.elo} · Rep {u.reputation}{u.position ? ` · ${POSITION_LABEL[u.position]}` : ' · Brez pozicije'}
+                      </Text>
                     </View>
                     <TouchableOpacity
                       style={[styles.inviteBtn, isInviting && { opacity: 0.5 }]}

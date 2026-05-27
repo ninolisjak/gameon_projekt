@@ -7,7 +7,7 @@ import { auth } from '../config/firebase';
 import { makeStyles } from '../styles/ProfileScreenStyles';
 import { useColors, usePremium } from '../context/PremiumContext';
 import {
-  ensureUserDoc, PlayerPosition, FutsalPosition, BasketballPosition,
+  ensureUserDoc, subscribeUserDoc, PlayerPosition, FutsalPosition, BasketballPosition,
   ReputationEntry,
 } from '../services/matchService';
 import { getReputationHistory, reasonLabel } from '../services/reputationService';
@@ -68,12 +68,28 @@ export default function ProfileScreen() {
 
   React.useEffect(() => {
     const uid = auth.currentUser?.uid;
-    if (!uid) return;
+    if (!uid || !isPremium) return;
+    const unsub = subscribeUserDoc(uid, d => {
+      if (d?.position) {
+        setPosition(d.position);
+        if ((['goalkeeper', 'defender', 'midfielder', 'forward'] as PlayerPosition[]).includes(d.position)) {
+          setSportFilter('futsal');
+        } else {
+          setSportFilter('basketball');
+        }
+      }
+    });
+    return unsub;
+  }, [isPremium]);
+
+  React.useEffect(() => {
+    const uid = auth.currentUser?.uid;
+    if (!uid || !isPremium) return;
     setHistoryLoading(true);
     getReputationHistory(uid, 20)
       .then(setHistory)
       .finally(() => setHistoryLoading(false));
-  }, [reputation]);
+  }, [reputation, isPremium]);
 
   async function handleSelectPosition(pos: PlayerPosition) {
     const uid = auth.currentUser?.uid;
@@ -188,6 +204,8 @@ export default function ProfileScreen() {
             </View>
           )}
 
+          {isPremium && (
+          <>
           <View style={{ marginTop: 16 }}>
             <Text style={styles.sectionLabel}>Moja pozicija</Text>
             <View style={{ flexDirection: 'row', gap: 8, marginBottom: 10 }}>
@@ -282,6 +300,8 @@ export default function ProfileScreen() {
               </View>
             )}
           </View>
+          </>
+          )}
 
 
           {isPremium ? (

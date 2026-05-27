@@ -89,7 +89,7 @@ export type Match = {
   waitlist: string[];
   createdBy: string;
   createdAt?: any;
-  // Premium-only fields
+
   isPremium?: boolean;
   teamA?: string[];
   teamB?: string[];
@@ -100,17 +100,17 @@ export type Match = {
   attended?: string[];
   result?: MatchResult;
   finalized?: boolean;
-  // Team balancing
+
   teamsBalanced?: boolean;
   balanceScore?: number;
   balanceMeta?: BalanceMeta;
-  // Private match fields
+
   isPrivate?: boolean;
   inviteCode?: string;
   groupId?: string;
-  // Recurring match
+
   isRecurring?: boolean;
-  // Start-consent flow
+
   startRequested?: boolean;
   startConsent?: Record<string, 'yes' | 'no' | 'pending'>;
   matchStarted?: boolean;
@@ -126,7 +126,7 @@ export type UserDoc = {
   email?: string;
   expoPushToken?: string;
   updatedAt?: any;
-  // Player profile for team balancing
+
   position?: PlayerPosition;
   wins?: number;
   losses?: number;
@@ -138,7 +138,6 @@ export type JoinResult =
   | { status: 'joined' }
   | { status: 'waitlisted'; position: number };
 
-// ─── Constants ────────────────────────────────────────────────────────────────
 
 export const STARTING_ELO = 700;
 export const STARTING_REPUTATION = 50;
@@ -191,7 +190,6 @@ function genInviteCode(): string {
   return Math.random().toString(36).slice(2, 8).toUpperCase();
 }
 
-// ── Public match CRUD ──────────────────────────────────────────────────────
 export async function createMatch(data: {
   sport: 'futsal' | 'basketball';
   lat: number;
@@ -239,7 +237,6 @@ export async function createMatch(data: {
   return addDoc(collection(db, 'matches'), { ...base, isPremium: false });
 }
 
-// ── Private match (GAM-11) ─────────────────────────────────────────────────
 export async function createPrivateMatch(data: {
   sport: 'futsal' | 'basketball';
   lat: number;
@@ -313,7 +310,6 @@ export async function getPrivateMatchByInviteCode(code: string): Promise<Match |
   return { ...snap.docs[0].data(), id: snap.docs[0].id } as Match;
 }
 
-// ── Recurring group (GAM-12) ───────────────────────────────────────────────
 export async function createRecurringGroup(data: {
   name: string;
   sport: 'futsal' | 'basketball';
@@ -601,7 +597,6 @@ export async function swapTeam(matchId: string, userId: string, requesterId: str
   });
 }
 
-// ─── Premium live-scoring ─────────────────────────────────────────────────────
 
 export async function checkIn(matchId: string, userId: string) {
   const ref = doc(db, 'matches', matchId);
@@ -684,7 +679,6 @@ export async function dismissPendingEvent(matchId: string, eventId: string, requ
   });
 }
 
-// ─── ELO + finalize (writes user docs to Firestore) ──────────────────────────
 
 function eloDelta(playerElo: number, oppTeamAvg: number, actual: number): number {
   const expected = 1 / (1 + Math.pow(10, (oppTeamAvg - playerElo) / 400));
@@ -794,18 +788,65 @@ export async function finalizeMatch(matchId: string, requesterId: string) {
   return { result, perPlayer: updates };
 }
 
-// ── Invite eligible players ───────────────────────────────────────────────────
 
 export async function fetchInvitablePlayers(
   minElo: number,
   minRep: number,
   excludeIds: string[],
+  opts?: { desiredPosition?: PlayerPosition; sport?: 'futsal' | 'basketball' },
 ): Promise<UserDoc[]> {
   const q = query(collection(db, 'users'), where('elo', '>=', minElo));
   const snap = await getDocs(q);
-  return snap.docs
+  const candidates = snap.docs
     .map(d => ({ ...d.data(), uid: d.id } as UserDoc))
     .filter(u => (u.reputation ?? 0) > minRep && !excludeIds.includes(u.uid));
+
+  if (opts?.sport) {
+    const futsalSet: Set<PlayerPosition> = new Set(['goalkeeper', 'defender', 'midfielder', 'forward']);
+    const basketSet: Set<PlayerPosition> = new Set(['guard', 'forward', 'center']);
+    const allowed = opts.sport === 'futsal' ? futsalSet : basketSet;
+    candidates.forEach(c => {
+      if (c.position && !allowed.has(c.position)) c.position = undefined;
+    });
+  }
+
+  function score(u: UserDoc): number {
+    const eloScore = (u.elo ?? STARTING_ELO);
+    const repScore = (u.reputation ?? 0) * 5;
+    const posBonus = opts?.desiredPosition && u.position === opts.desiredPosition ? 500 : 0;
+    const posPenalty = opts?.desiredPosition && u.position && u.position !== opts.desiredPosition ? -200 : 0;
+    return eloScore + repScore + posBonus + posPenalty;
+  }
+
+  return candidates.sort((a, b) => score(b) - score(a));
+}
+
+const FUTSAL_POSITIONS_LIST: PlayerPosition[] = ['goalkeeper', 'defender', 'midfielder', 'forward'];
+const BASKETBALL_POSITIONS_LIST: PlayerPosition[] = ['guard', 'forward', 'center'];
+
+export function suggestMissingPosition(
+  sport: 'futsal' | 'basketball',
+  teamPlayersWithPositions: { uid: string; position?: PlayerPosition }[],
+  teamTargetSize: number,
+): PlayerPosition | undefined {
+  const positions = sport === 'futsal' ? FUTSAL_POSITIONS_LIST : BASKETBALL_POSITIONS_LIST;
+  const counts = new Map<PlayerPosition, number>();
+  positions.forEach(p => counts.set(p, 0));
+  teamPlayersWithPositions.forEach(p => {
+    if (p.position && counts.has(p.position)) counts.set(p.position, counts.get(p.position)! + 1);
+  });
+
+  if (sport === 'futsal') {
+    if ((counts.get('goalkeeper') ?? 0) === 0 && teamTargetSize >= 4) return 'goalkeeper';
+  }
+
+  let minPos: PlayerPosition | undefined;
+  let minCount = Infinity;
+  positions.forEach(p => {
+    const c = counts.get(p) ?? 0;
+    if (c < minCount) { minCount = c; minPos = p; }
+  });
+  return minPos;
 }
 
 export async function invitePlayerToMatch(
@@ -833,7 +874,6 @@ export async function invitePlayerToMatch(
   });
 }
 
-// ── Team balancing ────────────────────────────────────────────────────────────
 
 async function fetchBalanceInputs(uids: string[]): Promise<BalanceInput[]> {
   const inputs = await Promise.all(uids.map(async uid => {
@@ -907,7 +947,6 @@ async function maybeAutoBalance(matchId: string): Promise<void> {
   }
 }
 
-// ── Start-consent flow ────────────────────────────────────────────────────────
 
 export async function requestMatchStart(matchId: string, creatorId: string): Promise<string[]> {
   const ref = doc(db, 'matches', matchId);
@@ -973,7 +1012,6 @@ export async function cancelMatchLowAttendance(matchId: string) {
   await updateDoc(ref, { status: 'closed', cancelReason: 'low_attendance' });
 }
 
-// ── Subscriptions ──────────────────────────────────────────────────────────
 export function subscribeMatch(matchId: string, onData: (m: Match | null) => void, _onError?: (e: Error) => void) {
   if (matchId === 'test') {
     onData(null);
@@ -1036,7 +1074,6 @@ export function subscribeGroups(userId: string, onData: (gs: RecurringGroup[]) =
   });
 }
 
-// ── User docs ──────────────────────────────────────────────────────────────
 export async function ensureUserDoc(uid: string, patch?: Partial<UserDoc>) {
   const ref = doc(db, 'users', uid);
   try {
@@ -1049,6 +1086,31 @@ export async function ensureUserDoc(uid: string, patch?: Partial<UserDoc>) {
   } catch (e) {
     console.warn('ensureUserDoc failed (no Firestore?)', e);
   }
+}
+
+export async function resolveUserProfiles(uids: string[]): Promise<Map<string, { elo: number; reputation: number; position?: PlayerPosition }>> {
+  const result = new Map<string, { elo: number; reputation: number; position?: PlayerPosition }>();
+  const toFetch = uids.filter(uid => uid.length > 10);
+  uids.filter(uid => uid.length <= 10).forEach(uid => {
+    result.set(uid, { elo: STARTING_ELO, reputation: STARTING_REPUTATION });
+  });
+
+  const fetches = await Promise.allSettled(
+    toFetch.map(async uid => {
+      const snap = await getDoc(doc(db, 'users', uid));
+      if (snap.exists()) {
+        const d = snap.data() as UserDoc;
+        return { uid, elo: d.elo ?? STARTING_ELO, reputation: d.reputation ?? STARTING_REPUTATION, position: d.position };
+      }
+      return { uid, elo: STARTING_ELO, reputation: STARTING_REPUTATION, position: undefined };
+    })
+  );
+  for (const r of fetches) {
+    if (r.status === 'fulfilled') {
+      result.set(r.value.uid, { elo: r.value.elo, reputation: r.value.reputation, position: r.value.position });
+    }
+  }
+  return result;
 }
 
 export async function resolveUserNames(uids: string[]): Promise<Map<string, string>> {
