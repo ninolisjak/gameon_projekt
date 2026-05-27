@@ -4,7 +4,7 @@ import { Ionicons } from '@expo/vector-icons';
 import {
   Match, UserDoc, proposeGoal, confirmGoal, dismissPendingEvent,
   checkIn, swapTeam, finalizeMatch, requiredConfirmations,
-  fetchInvitablePlayers, invitePlayerToMatch,
+  fetchInvitablePlayers, invitePlayerToMatch, regenerateTeams,
 } from '../services/matchService';
 import { useColors } from '../context/PremiumContext';
 import { makeStyles } from '../styles/PremiumMatchPanelStyles';
@@ -78,6 +78,28 @@ export default function PremiumMatchPanel({ match, userId, userNames }: Props) {
 
   function handleSwap(playerId: string) {
     withBusy(() => swapTeam(match.id, playerId, userId));
+  }
+
+  function handleRegenerateTeams() {
+    Alert.alert(
+      'Izravnaj ekipi',
+      'Sistem bo na novo razporedil igralce glede na ELO, statistiko in pozicijo. Ali nadaljuješ?',
+      [
+        { text: 'Prekliči', style: 'cancel' },
+        {
+          text: 'Izravnaj',
+          onPress: () => withBusy(async () => {
+            await regenerateTeams(match.id, userId);
+          }),
+        },
+      ]
+    );
+  }
+
+  function balanceColor(score: number): string {
+    if (score >= 80) return '#22c55e';
+    if (score >= 60) return '#eab308';
+    return '#ef4444';
   }
 
   async function handleOpenInvite(team: 'A' | 'B') {
@@ -196,8 +218,68 @@ export default function PremiumMatchPanel({ match, userId, userNames }: Props) {
       );
     }
 
+    const balanceScore = match.balanceScore;
+    const balanceMeta = match.balanceMeta;
+    const showBalance = match.teamsBalanced && balanceScore !== undefined && balanceMeta;
+    const canRegen = isCreator && !finalized && !match.matchStarted && (match.players?.length ?? 0) >= 2;
+
     return (
       <View style={{ gap: 12 }}>
+        {showBalance && (
+          <View style={{
+            flexDirection: 'row', alignItems: 'center', gap: 10,
+            padding: 12, borderRadius: 12,
+            backgroundColor: colors.bgElevated,
+            borderWidth: 1, borderColor: colors.border,
+          }}>
+            <View style={{
+              width: 44, height: 44, borderRadius: 22,
+              backgroundColor: balanceColor(balanceScore!) + '20',
+              alignItems: 'center', justifyContent: 'center',
+              borderWidth: 2, borderColor: balanceColor(balanceScore!),
+            }}>
+              <Text style={{ color: balanceColor(balanceScore!), fontWeight: '900', fontSize: 14 }}>{balanceScore}</Text>
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={{ color: colors.text, fontWeight: '800', fontSize: 13 }}>Uravnoteženost ekip</Text>
+              <Text style={{ color: colors.textMuted, fontSize: 11, marginTop: 2 }}>
+                ELO A: {balanceMeta!.avgEloA} · ELO B: {balanceMeta!.avgEloB} · Razlika: {balanceMeta!.eloDiff}
+              </Text>
+            </View>
+            {canRegen && (
+              <TouchableOpacity
+                onPress={handleRegenerateTeams}
+                disabled={busy}
+                style={{
+                  flexDirection: 'row', alignItems: 'center', gap: 4,
+                  paddingHorizontal: 10, paddingVertical: 6,
+                  borderRadius: 8,
+                  backgroundColor: colors.primary,
+                }}
+                activeOpacity={0.85}
+              >
+                <Ionicons name="refresh" size={14} color="#fff" />
+                <Text style={{ color: '#fff', fontSize: 11, fontWeight: '800' }}>IZRAVNAJ</Text>
+              </TouchableOpacity>
+            )}
+          </View>
+        )}
+        {!showBalance && canRegen && (match.players?.length ?? 0) >= 2 && (
+          <TouchableOpacity
+            onPress={handleRegenerateTeams}
+            disabled={busy}
+            style={{
+              flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8,
+              padding: 10, borderRadius: 10,
+              backgroundColor: colors.bgElevated,
+              borderWidth: 1, borderColor: colors.primaryTint ?? colors.border,
+            }}
+            activeOpacity={0.85}
+          >
+            <Ionicons name="git-network" size={16} color={colors.primaryLight} />
+            <Text style={{ color: colors.primaryLight, fontSize: 13, fontWeight: '800' }}>Avtomatsko izravnaj ekipi</Text>
+          </TouchableOpacity>
+        )}
         <View style={styles.teamsRow}>
           {renderTeamCard('A')}
           {renderTeamCard('B')}

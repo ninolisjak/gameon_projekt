@@ -4,6 +4,8 @@ import {
   runTransaction, query, where, getDocs
 } from 'firebase/firestore';
 import { db } from '../config/firebase';
+import { balanceTeams, userToBalanceInput, BalanceInput } from './teamBalancer';
+import { applyReputationChange, REP_DELTA } from './reputationService';
 
 // ── Types ──────────────────────────────────────────────────────────────────
 export type MatchResult = 'pending' | 'team_a_won' | 'team_b_won' | 'draw';
@@ -51,6 +53,29 @@ export type RecurringSlot = {
   createdAt?: any;
 };
 
+export type FutsalPosition = 'goalkeeper' | 'defender' | 'midfielder' | 'forward';
+export type BasketballPosition = 'guard' | 'forward' | 'center';
+export type PlayerPosition = FutsalPosition | BasketballPosition;
+
+export type BalanceMeta = {
+  avgEloA: number;
+  avgEloB: number;
+  eloDiff: number;
+  positionBalance: number;
+  generatedAt?: any;
+};
+
+export type ReputationReason = 'attended' | 'no_show' | 'late_cancel' | 'on_time_cancel' | 'manual';
+
+export type ReputationEntry = {
+  id: string;
+  delta: number;
+  reason: ReputationReason;
+  matchId?: string;
+  balanceAfter: number;
+  createdAt?: any;
+};
+
 export type Match = {
   id: string;
   sport: 'futsal' | 'basketball';
@@ -75,6 +100,10 @@ export type Match = {
   attended?: string[];
   result?: MatchResult;
   finalized?: boolean;
+  // Team balancing
+  teamsBalanced?: boolean;
+  balanceScore?: number;
+  balanceMeta?: BalanceMeta;
   // Private match fields
   isPrivate?: boolean;
   inviteCode?: string;
@@ -97,6 +126,12 @@ export type UserDoc = {
   email?: string;
   expoPushToken?: string;
   updatedAt?: any;
+  // Player profile for team balancing
+  position?: PlayerPosition;
+  wins?: number;
+  losses?: number;
+  draws?: number;
+  matchesPlayed?: number;
 };
 
 export type JoinResult =
@@ -109,8 +144,7 @@ export const STARTING_ELO = 700;
 export const STARTING_REPUTATION = 50;
 const ELO_K = 32;
 const GOAL_ELO_BONUS = 5;
-const REP_ATTEND = 2;
-const REP_NO_SHOW = 5;
+const LATE_CANCEL_WINDOW_MS = 2 * 60 * 60 * 1000;
 
 export function requiredConfirmations(totalSpots: number): number {
   return Math.max(2, Math.ceil(totalSpots / 3));
@@ -364,7 +398,7 @@ async function _generateNextSlot(groupId: string, group: any) {
 
 export async function joinMatch(matchId: string, userId: string, opts?: { userIsPremium?: boolean }): Promise<JoinResult> {
   const ref = doc(db, 'matches', matchId);
-  return await runTransaction(db, async tx => {
+  const result = await runTransaction(db, async tx => {
     const snap = await tx.get(ref);
     if (!snap.exists()) throw new Error('Tekma ne obstaja.');
     const data = snap.data() as Match;
@@ -395,20 +429,30 @@ export async function joinMatch(matchId: string, userId: string, opts?: { userIs
       }
 
       tx.update(ref, update);
-      return { status: 'joined' as const };
+      const becameFull = newFilled >= data.totalSpots;
+      return { status: 'joined' as const, becameFull, isPremium: !!data.isPremium };
     } else {
       tx.update(ref, {
         waitlist: arrayUnion(userId)
       });
       const currentPosition = (data.waitlist?.length ?? 0) + 1;
-      return { status: 'waitlisted' as const, position: currentPosition };
+      return { status: 'waitlisted' as const, position: currentPosition, becameFull: false, isPremium: !!data.isPremium };
     }
   });
+
+  if (result.status === 'joined' && result.becameFull && result.isPremium) {
+    void maybeAutoBalance(matchId);
+  }
+
+  if (result.status === 'waitlisted') {
+    return { status: 'waitlisted', position: result.position };
+  }
+  return { status: 'joined' };
 }
 
 export async function leaveMatch(matchId: string, userId: string) {
   const ref = doc(db, 'matches', matchId);
-  await runTransaction(db, async tx => {
+  const ctx = await runTransaction(db, async tx => {
     const snap = await tx.get(ref);
     if (!snap.exists()) throw new Error('Tekma ne obstaja.');
     const data = snap.data() as Match;
@@ -444,6 +488,9 @@ export async function leaveMatch(matchId: string, userId: string) {
         update.teamA = (data.teamA ?? []).filter(p => p !== userId);
         update.teamB = (data.teamB ?? []).filter(p => p !== userId);
       }
+      if (data.teamsBalanced && data.isPremium) {
+        update.teamsBalanced = false;
+      }
     }
 
     update.players = updatedPlayers;
@@ -451,7 +498,17 @@ export async function leaveMatch(matchId: string, userId: string) {
     update.status = newFilled >= data.totalSpots ? 'full' : 'open';
 
     tx.update(ref, update);
+
+    const matchDate = data.datetime?.toDate ? data.datetime.toDate() : new Date(data.datetime);
+    const msUntil = isNaN(matchDate.getTime()) ? Infinity : matchDate.getTime() - Date.now();
+    return { msUntil };
   });
+
+  if (ctx.msUntil < LATE_CANCEL_WINDOW_MS && ctx.msUntil > -LATE_CANCEL_WINDOW_MS) {
+    await applyReputationChange(userId, REP_DELTA.late_cancel, 'late_cancel', matchId);
+  } else if (ctx.msUntil >= LATE_CANCEL_WINDOW_MS) {
+    await applyReputationChange(userId, REP_DELTA.on_time_cancel, 'on_time_cancel', matchId);
+  }
 }
 
 export async function leaveWaitlist(matchId: string, userId: string) {
@@ -690,7 +747,12 @@ export async function finalizeMatch(matchId: string, requesterId: string) {
     const resultElo = hasAttended ? eloDelta(u.elo, oppAvg, actual) : 0;
     const goalElo = hasAttended ? goals * GOAL_ELO_BONUS : 0;
     const dElo = resultElo + goalElo;
-    const dRep = hasAttended ? REP_ATTEND : -REP_NO_SHOW;
+    const dRep = hasAttended ? REP_DELTA.attended : REP_DELTA.no_show;
+    const repReason: 'attended' | 'no_show' = hasAttended ? 'attended' : 'no_show';
+
+    const isWin = hasAttended && (onA ? result === 'team_a_won' : result === 'team_b_won');
+    const isLoss = hasAttended && (onA ? result === 'team_b_won' : result === 'team_a_won');
+    const isDraw = hasAttended && result === 'draw';
 
     return {
       uid: u.uid,
@@ -699,18 +761,32 @@ export async function finalizeMatch(matchId: string, requesterId: string) {
       goalElo,
       dElo,
       dRep,
+      repReason,
+      isWin,
+      isLoss,
+      isDraw,
       newElo: Math.max(0, u.elo + dElo),
       newRep: Math.max(0, u.reputation + dRep),
     };
   });
 
   const realUsers = updates.filter(u => !DEMO_USERS.includes(u.uid as any) && u.uid.length > 10);
+
   await Promise.allSettled(
-    realUsers.map(u =>
-      setDoc(doc(db, 'users', u.uid),
-        { uid: u.uid, elo: u.newElo, reputation: u.newRep, updatedAt: Timestamp.now() },
-        { merge: true })
-    )
+    realUsers.map(async u => {
+      const userRef = doc(db, 'users', u.uid);
+      const userPatch: any = {
+        uid: u.uid,
+        elo: u.newElo,
+        updatedAt: Timestamp.now(),
+        matchesPlayed: increment(1),
+      };
+      if (u.isWin) userPatch.wins = increment(1);
+      else if (u.isLoss) userPatch.losses = increment(1);
+      else if (u.isDraw) userPatch.draws = increment(1);
+      await setDoc(userRef, userPatch, { merge: true });
+      await applyReputationChange(u.uid, u.dRep, u.repReason, matchId);
+    })
   );
 
   await updateDoc(ref, { result, finalized: true, status: 'closed' });
@@ -755,6 +831,80 @@ export async function invitePlayerToMatch(
       [teamField]: [...currentTeam, targetUserId],
     });
   });
+}
+
+// ── Team balancing ────────────────────────────────────────────────────────────
+
+async function fetchBalanceInputs(uids: string[]): Promise<BalanceInput[]> {
+  const inputs = await Promise.all(uids.map(async uid => {
+    if (uid.length <= 10) {
+      return { uid, elo: STARTING_ELO, winRate: 0.5, matchesPlayed: 0 } as BalanceInput;
+    }
+    try {
+      const snap = await getDoc(doc(db, 'users', uid));
+      if (snap.exists()) {
+        return userToBalanceInput({ ...(snap.data() as UserDoc), uid });
+      }
+    } catch { /* fall through */ }
+    return { uid, elo: STARTING_ELO, winRate: 0.5, matchesPlayed: 0 } as BalanceInput;
+  }));
+  return inputs;
+}
+
+async function runBalancerForMatch(matchId: string, players: string[]): Promise<{
+  teamA: string[]; teamB: string[]; balanceScore: number; balanceMeta: BalanceMeta;
+}> {
+  const inputs = await fetchBalanceInputs(players);
+  const result = balanceTeams(inputs);
+  const meta: BalanceMeta = { ...result.meta, generatedAt: Timestamp.now() };
+  return { teamA: result.teamA, teamB: result.teamB, balanceScore: result.score, balanceMeta: meta };
+}
+
+export async function regenerateTeams(matchId: string, requesterId: string): Promise<void> {
+  const ref = doc(db, 'matches', matchId);
+  const snap = await getDoc(ref);
+  if (!snap.exists()) throw new Error('Tekma ne obstaja.');
+  const data = snap.data() as Match;
+  if (data.createdBy !== requesterId) throw new Error('Samo gostitelj lahko regenerira ekipi.');
+  if (!data.isPremium) throw new Error('Samo Premium tekme imajo izravnavo.');
+  if (data.finalized) throw new Error('Tekma je že zaključena.');
+  if (data.matchStarted) throw new Error('Tekma je že začeta.');
+
+  const players = data.players ?? [];
+  if (players.length < 2) throw new Error('Potrebna sta vsaj 2 igralca.');
+
+  const balanced = await runBalancerForMatch(matchId, players);
+  await updateDoc(ref, {
+    teamA: balanced.teamA,
+    teamB: balanced.teamB,
+    teamsBalanced: true,
+    balanceScore: balanced.balanceScore,
+    balanceMeta: balanced.balanceMeta,
+  });
+}
+
+async function maybeAutoBalance(matchId: string): Promise<void> {
+  try {
+    const ref = doc(db, 'matches', matchId);
+    const snap = await getDoc(ref);
+    if (!snap.exists()) return;
+    const data = snap.data() as Match;
+    if (!data.isPremium) return;
+    if (data.teamsBalanced) return;
+    if (data.matchStarted || data.finalized) return;
+    if (data.filledSpots < data.totalSpots) return;
+
+    const balanced = await runBalancerForMatch(matchId, data.players ?? []);
+    await updateDoc(ref, {
+      teamA: balanced.teamA,
+      teamB: balanced.teamB,
+      teamsBalanced: true,
+      balanceScore: balanced.balanceScore,
+      balanceMeta: balanced.balanceMeta,
+    });
+  } catch (e) {
+    console.warn('maybeAutoBalance failed', e);
+  }
 }
 
 // ── Start-consent flow ────────────────────────────────────────────────────────
