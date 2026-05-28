@@ -3,12 +3,13 @@ import { getAuth } from 'firebase/auth';
 import { getFirestore } from 'firebase/firestore';
 
 const firebaseConfig = {
-  apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
-  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
-  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
-  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
-  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
-  appId: import.meta.env.VITE_FIREBASE_APP_ID,
+  apiKey: 'AIzaSyAdJp9gBOIvunXssLu2JJ3aEh5ZDzHHcPw',
+  authDomain: 'gameon-9d876.firebaseapp.com',
+  databaseURL: 'https://gameon-9d876-default-rtdb.europe-west1.firebasedatabase.app',
+  projectId: 'gameon-9d876',
+  storageBucket: 'gameon-9d876.firebasestorage.app',
+  messagingSenderId: '900495301978',
+  appId: '1:900495301978:web:a7bc39ea4e5dfd1bd96763',
 };
 
 const app = initializeApp(firebaseConfig);
