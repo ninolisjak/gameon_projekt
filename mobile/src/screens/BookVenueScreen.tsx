@@ -107,7 +107,7 @@ export default function BookVenueScreen() {
         price: selectedSlot.pricePerSlot,
       });
       Alert.alert(
-        'Rezervacija potrjena! ✓',
+        'Rezervacija potrjena!',
         `${selectedVenue.name}\n${formatDate(selectedDate)}\n${selectedSlot.startHHMM} – ${selectedSlot.endHHMM}\n${selectedSlot.pricePerSlot} €`,
         [{ text: 'OK', onPress: () => navigation.goBack() }],
       );
@@ -144,7 +144,7 @@ export default function BookVenueScreen() {
         </View>
       </SafeAreaView>
 
-      {/* Step indicator */}
+
       <View style={{ flexDirection: 'row', paddingHorizontal: 16, gap: 8, marginBottom: 16 }}>
         {(['venues', 'slots', 'confirm'] as Step[]).map((s, i) => (
           <View key={s} style={{ flex: 1, height: 3, borderRadius: 2, backgroundColor: step === s || (i < ['venues', 'slots', 'confirm'].indexOf(step)) ? primary : border }} />
@@ -157,7 +157,7 @@ export default function BookVenueScreen() {
         </View>
       )}
 
-      {/* STEP 1: Venues */}
+
       {!loading && step === 'venues' && (
         <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 40 }}>
           <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: card, borderRadius: 10, borderWidth: 1, borderColor: border, paddingHorizontal: 12, marginBottom: 16 }}>
