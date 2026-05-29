@@ -15,6 +15,9 @@ import LoginScreen from './src/screens/LoginScreen';
 import ProfileScreen from './src/screens/ProfileScreen';
 import GroupsScreen from './src/screens/GroupsScreen';
 import BookVenueScreen from './src/screens/BookVenueScreen';
+import CostSplitScreen from './src/screens/CostSplitScreen';
+import UserCostHistoryScreen from './src/screens/UserCostHistoryScreen';
+import PaymentCardScreen from './src/screens/PaymentCardScreen';
 import { makeDrawerStyles } from './src/styles/AppStyles';
 import { PremiumProvider, useColors } from './src/context/PremiumContext';
 import { ensureUserDoc } from './src/services/matchService';
@@ -37,13 +40,7 @@ function DrawerContent(props: any) {
           <Text style={drawerStyles.logoTextBottom}>ON</Text>
         </View>
       </View>
-      <DrawerItemList
-        {...props}
-        activeTintColor={colors.primary}
-        inactiveTintColor={colors.textMuted}
-        activeBackgroundColor={colors.bgSelected}
-        inactiveBackgroundColor="transparent"
-      />
+      <DrawerItemList {...props} />
     </DrawerContentScrollView>
   );
 }
@@ -56,6 +53,8 @@ function MainStack() {
       <Stack.Screen name="MatchDetails" component={MatchDetailsScreen} />
       <Stack.Screen name="Groups" component={GroupsScreen} />
       <Stack.Screen name="BookVenue" component={BookVenueScreen} />
+      <Stack.Screen name="CostSplit" component={CostSplitScreen} />
+      <Stack.Screen name="PaymentCard" component={PaymentCardScreen} />
     </Stack.Navigator>
   );
 }
@@ -63,7 +62,18 @@ function MainStack() {
 function MainDrawer() {
   const colors = useColors();
   return (
-    <Drawer.Navigator drawerContent={(props) => <DrawerContent {...props} />} screenOptions={{ headerShown: false, drawerStyle: { backgroundColor: colors.bg, width: 260 } }}>
+    <Drawer.Navigator
+      drawerContent={(props) => <DrawerContent {...props} />}
+      screenOptions={{
+        headerShown: false,
+        drawerStyle: { backgroundColor: colors.bg, width: 260 },
+        drawerActiveTintColor: colors.primary,
+        drawerInactiveTintColor: '#c8d3e8',
+        drawerActiveBackgroundColor: colors.bgSelected,
+        drawerInactiveBackgroundColor: 'transparent',
+        drawerLabelStyle: { fontWeight: '600', fontSize: 14 },
+      }}
+    >
       <Drawer.Screen
         name="Home"
         component={MainStack}
@@ -94,6 +104,14 @@ function MainDrawer() {
         options={{
           title: 'Rezerviraj igrišče',
           drawerIcon: ({ color }) => <Ionicons name="calendar-outline" size={20} color={color} />,
+        }}
+      />
+      <Drawer.Screen
+        name="CostHistory"
+        component={UserCostHistoryScreen}
+        options={{
+          title: 'Evidenca stroškov',
+          drawerIcon: ({ color }) => <Ionicons name="receipt-outline" size={20} color={color} />,
         }}
       />
       <Drawer.Screen

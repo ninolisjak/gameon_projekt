@@ -3,7 +3,8 @@ import {
   arrayUnion, arrayRemove, increment, onSnapshot, getDoc,
   runTransaction, query, where, getDocs, orderBy, limit,
 } from 'firebase/firestore';
-import { db } from '../config/firebase';
+import { db, functions } from '../config/firebase';
+import { httpsCallable } from 'firebase/functions';
 import { balanceTeams, userToBalanceInput, BalanceInput } from './teamBalancer';
 import { applyReputationChange, REP_DELTA } from './reputationService';
 
@@ -127,6 +128,9 @@ export type Match = {
   isPrivate?: boolean;
   inviteCode?: string;
   groupId?: string;
+
+  rentalCost?: number;
+  costSplit?: Record<string, 'paid' | 'unpaid'>;
 
   isRecurring?: boolean;
 
@@ -829,6 +833,42 @@ export async function finalizeMatch(matchId: string, requesterId: string) {
 }
 
 
+// ── Rental cost splitting ─────────────────────────────────────────────────────
+
+export async function setMatchRentalCost(matchId: string, cost: number, creatorId: string) {
+  const ref = doc(db, 'matches', matchId);
+  await runTransaction(db, async tx => {
+    const snap = await tx.get(ref);
+    if (!snap.exists()) throw new Error('Tekma ne obstaja.');
+    const data = snap.data() as Match;
+    if (data.createdBy !== creatorId) throw new Error('Samo gostitelj lahko nastavi strošek.');
+    const costSplit: Record<string, 'paid' | 'unpaid'> = {};
+    (data.players ?? []).forEach(p => { costSplit[p] = 'unpaid'; });
+    tx.update(ref, { rentalCost: cost, costSplit });
+  });
+}
+
+export async function markPlayerPayment(matchId: string, playerId: string, status: 'paid' | 'unpaid') {
+  const ref = doc(db, 'matches', matchId);
+  await updateDoc(ref, { [`costSplit.${playerId}`]: status });
+}
+
+export async function fetchUserCostHistory(userId: string): Promise<Match[]> {
+  // Only one inequality field to avoid needing a composite Firestore index
+  const q = query(collection(db, 'matches'), where('players', 'array-contains', userId));
+  const snap = await getDocs(q);
+  return snap.docs
+    .map(d => ({ ...d.data(), id: d.id } as Match))
+    .filter(m => (m.rentalCost ?? 0) > 0)          // client-side filter
+    .sort((a, b) => {
+      const tA = a.datetime?.toDate ? a.datetime.toDate().getTime() : new Date(a.datetime).getTime();
+      const tB = b.datetime?.toDate ? b.datetime.toDate().getTime() : new Date(b.datetime).getTime();
+      return tB - tA;
+    });
+}
+
+// ── Invite eligible players ───────────────────────────────────────────────────
+
 export async function fetchInvitablePlayers(
   minElo: number,
   minRep: number,
@@ -1223,3 +1263,17 @@ export const DEMO_USERS = ['ana', 'marc', 'luka', 'niko'] as const;
     isPremium: false,
   });
 })();
+
+// ── Stripe Checkout ───────────────────────────────────────────────────────────
+
+export async function createStripeCheckoutSession(
+  amount: number,
+  entityType: 'match' | 'reservation',
+  entityId: string,
+  userId: string,
+  description: string,
+): Promise<string> {
+  const fn = httpsCallable<unknown, { url: string }>(functions, 'createCheckoutSession');
+  const result = await fn({ amount, entityType, entityId, userId, description });
+  return result.data.url;
+}

@@ -1,6 +1,6 @@
 import {
-  collection, query, where, getDocs, addDoc,
-  runTransaction, doc, Timestamp,
+  collection, query, where, getDocs,
+  runTransaction, doc, Timestamp, updateDoc,
 } from 'firebase/firestore';
 import { db } from '../config/firebase';
 
@@ -36,6 +36,7 @@ export type Reservation = {
   endHHMM: string;
   price: number;
   status: 'pending' | 'confirmed' | 'cancelled';
+  paid?: boolean;
   createdAt?: any;
 };
 
@@ -121,20 +122,22 @@ export async function createReservation(data: {
 }
 
 export async function cancelReservation(reservationId: string): Promise<void> {
-  const ref = doc(db, 'reservations', reservationId);
-  const { updateDoc } = await import('firebase/firestore');
-  await updateDoc(ref, { status: 'cancelled' });
+  await updateDoc(doc(db, 'reservations', reservationId), { status: 'cancelled' });
+}
+
+export async function markReservationPaid(reservationId: string): Promise<void> {
+  await updateDoc(doc(db, 'reservations', reservationId), { paid: true });
 }
 
 export async function fetchMyReservations(userId: string): Promise<Reservation[]> {
   const q = query(
     collection(db, 'reservations'),
     where('bookedBy', '==', userId),
-    where('status', '!=', 'cancelled'),
   );
   const snap = await getDocs(q);
   return snap.docs
     .map(d => ({ ...d.data(), id: d.id } as Reservation))
+    .filter(r => r.status !== 'cancelled')
     .sort((a, b) => {
       const ta = a.date?.toDate?.()?.getTime() ?? 0;
       const tb = b.date?.toDate?.()?.getTime() ?? 0;
