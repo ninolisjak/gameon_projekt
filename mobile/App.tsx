@@ -14,6 +14,7 @@ import MatchDetailsScreen from './src/screens/MatchDetailsScreen';
 import LoginScreen from './src/screens/LoginScreen';
 import ProfileScreen from './src/screens/ProfileScreen';
 import GroupsScreen from './src/screens/GroupsScreen';
+import BookVenueScreen from './src/screens/BookVenueScreen';
 import { makeDrawerStyles } from './src/styles/AppStyles';
 import { PremiumProvider, useColors } from './src/context/PremiumContext';
 import { ensureUserDoc } from './src/services/matchService';
@@ -54,6 +55,7 @@ function MainStack() {
       <Stack.Screen name="CreateMatch" component={CreateMatchScreen} />
       <Stack.Screen name="MatchDetails" component={MatchDetailsScreen} />
       <Stack.Screen name="Groups" component={GroupsScreen} />
+      <Stack.Screen name="BookVenue" component={BookVenueScreen} />
     </Stack.Navigator>
   );
 }
@@ -84,6 +86,14 @@ function MainDrawer() {
         options={{
           title: 'Skupine',
           drawerIcon: ({ color }) => <Ionicons name="people-outline" size={20} color={color} />,
+        }}
+      />
+      <Drawer.Screen
+        name="BookVenue"
+        component={BookVenueScreen}
+        options={{
+          title: 'Rezerviraj igrišče',
+          drawerIcon: ({ color }) => <Ionicons name="calendar-outline" size={20} color={color} />,
         }}
       />
       <Drawer.Screen

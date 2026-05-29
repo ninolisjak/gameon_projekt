@@ -9,6 +9,8 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { makeStyles } from '../styles/MapScreenStyles';
 import { auth } from '../config/firebase';
 import { useColors } from '../context/PremiumContext';
+import { doc, getDocs, getDoc,  collection,  } from 'firebase/firestore';
+import { db } from '../config/firebase'
 
 type Match = {
   id: string;
@@ -124,8 +126,53 @@ export default function MapScreen() {
   const colors = useColors();
   const styles = React.useMemo(() => makeStyles(colors), [colors]);
 
+  // 1. Definicija funkcije za izpis JSON-a
+/*  async function logDocumentAsJson(venueId: string) {
+    try {
+      // 1. Pridobi glavne podatke o igrišču (venue)
+      const venueRef = doc(db, 'venues', venueId);
+      const venueSnap = await getDoc(venueRef);
+
+      if (!venueSnap.exists()) {
+        console.log(`Igrišče z ID-jem ${venueId} ne obstaja v zbirki 'venues'!`);
+        return;
+      }
+
+      const venueData = venueSnap.data();
+
+      // 2. Pridobi vse dokumente iz podzbirke 'schedule' znotraj tega igrišča
+      const scheduleRef = collection(db, 'venues', venueId, 'schedule');
+      const scheduleSnap = await getDocs(scheduleRef);
+      
+      const scheduleList: any[] = [];
+      scheduleSnap.forEach((doc) => {
+        scheduleList.push({
+          id: doc.id,
+          ...doc.data()
+        });
+      });
+
+      // 3. Združi podatke v enoten objekt
+      const fullVenueObject = {
+        id: venueSnap.id,
+        ...venueData,
+        schedule: scheduleList // Tukaj dodamo celoten urnik
+      };
+
+      // 4. Izpis celotnega rezultata v konzolo
+      console.log("============== FIRESTORE VENUE + SCHEDULE JSON ==============");
+      console.log(JSON.stringify(fullVenueObject, null, 2));
+      console.log("=============================================================");
+
+    } catch (error) {
+      console.error("Napaka pri pridobivanju celotnih podatkov igrišča:", error);
+    }
+  
+  }
+*/
   useFocusEffect(
     React.useCallback(() => {
+      //logDocumentAsJson('LaMTb3trnoIlweak4SEe');
       const userId = auth.currentUser?.uid ?? '';
       return subscribeMatches(userId, setMatches);
     }, [])
