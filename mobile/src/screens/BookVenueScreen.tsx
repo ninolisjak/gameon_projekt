@@ -11,11 +11,15 @@ import {
   fetchActiveVenues, fetchVenueSchedule, fetchReservationsForDate,
   createReservation, Venue, ScheduleSlot, Reservation,
 } from '../services/reservationService';
+import {
+  fetchWeatherForDateTime, weatherDescription, WeatherData,
+} from '../services/weatherService';
+import { exportToIcal } from '../services/icalService';
 
 const WEEKDAY_LABELS = ['Ned', 'Pon', 'Tor', 'Sre', 'Čet', 'Pet', 'Sob'];
 
-function getNextDateForWeekday(weekday: number, fromDate: Date = new Date()): Date {
-  const result = new Date(fromDate);
+function getNextDateForWeekday(weekday: number): Date {
+  const result = new Date();
   const diff = (weekday - result.getDay() + 7) % 7 || 7;
   result.setDate(result.getDate() + diff);
   result.setHours(0, 0, 0, 0);
@@ -24,6 +28,20 @@ function getNextDateForWeekday(weekday: number, fromDate: Date = new Date()): Da
 
 function formatDate(d: Date): string {
   return d.toLocaleDateString('sl-SI', { weekday: 'long', day: 'numeric', month: 'long' });
+}
+
+function buildStartDate(date: Date, timeHHMM: string): Date {
+  const [hh, mm] = timeHHMM.split(':').map(Number);
+  const d = new Date(date);
+  d.setHours(hh, mm, 0, 0);
+  return d;
+}
+
+function buildEndDate(date: Date, timeHHMM: string): Date {
+  const [hh, mm] = timeHHMM.split(':').map(Number);
+  const d = new Date(date);
+  d.setHours(hh, mm, 0, 0);
+  return d;
 }
 
 type Step = 'venues' | 'slots' | 'confirm';
@@ -40,8 +58,12 @@ export default function BookVenueScreen() {
   const [reservations, setReservations] = React.useState<Reservation[]>([]);
   const [selectedSlot, setSelectedSlot] = React.useState<ScheduleSlot | null>(null);
   const [selectedDate, setSelectedDate] = React.useState<Date | null>(null);
+  const [weather, setWeather] = React.useState<WeatherData | null>(null);
+  const [weatherLoading, setWeatherLoading] = React.useState(false);
   const [loading, setLoading] = React.useState(false);
   const [booking, setBooking] = React.useState(false);
+  const [booked, setBooked] = React.useState(false);
+  const [reservationId, setReservationId] = React.useState<string | null>(null);
 
   React.useEffect(() => {
     loadVenues();
@@ -50,8 +72,7 @@ export default function BookVenueScreen() {
   async function loadVenues() {
     setLoading(true);
     try {
-      const data = await fetchActiveVenues();
-      setVenues(data);
+      setVenues(await fetchActiveVenues());
     } catch (e: any) {
       Alert.alert('Napaka', e.message);
     } finally {
@@ -63,8 +84,7 @@ export default function BookVenueScreen() {
     setSelectedVenue(venue);
     setLoading(true);
     try {
-      const slots = await fetchVenueSchedule(venue.id);
-      setSchedule(slots);
+      setSchedule(await fetchVenueSchedule(venue.id));
       setStep('slots');
     } catch (e: any) {
       Alert.alert('Napaka', e.message);
@@ -77,11 +97,25 @@ export default function BookVenueScreen() {
     const date = getNextDateForWeekday(slot.weekday);
     setSelectedSlot(slot);
     setSelectedDate(date);
+    setWeather(null);
     setLoading(true);
     try {
       const existing = await fetchReservationsForDate(slot.venueId, date);
       setReservations(existing);
       setStep('confirm');
+      
+      if (selectedVenue) {
+        setWeatherLoading(true);
+        const hour = parseInt(slot.startHHMM.split(':')[0]);
+        const w = await fetchWeatherForDateTime(
+          selectedVenue.location.lat,
+          selectedVenue.location.lng,
+          date,
+          hour,
+        );
+        setWeather(w);
+        setWeatherLoading(false);
+      }
     } catch (e: any) {
       Alert.alert('Napaka', e.message);
     } finally {
@@ -97,7 +131,7 @@ export default function BookVenueScreen() {
     if (!selectedVenue || !selectedSlot || !selectedDate) return;
     setBooking(true);
     try {
-      await createReservation({
+      const id = await createReservation({
         venueId: selectedVenue.id,
         ownerId: selectedVenue.ownerId,
         bookedBy: userId,
@@ -106,15 +140,29 @@ export default function BookVenueScreen() {
         endHHMM: selectedSlot.endHHMM,
         price: selectedSlot.pricePerSlot,
       });
-      Alert.alert(
-        'Rezervacija potrjena!',
-        `${selectedVenue.name}\n${formatDate(selectedDate)}\n${selectedSlot.startHHMM} – ${selectedSlot.endHHMM}\n${selectedSlot.pricePerSlot} €`,
-        [{ text: 'OK', onPress: () => navigation.goBack() }],
-      );
+      setReservationId(id);
+      setBooked(true);
     } catch (e: any) {
       Alert.alert('Napaka', e.message);
     } finally {
       setBooking(false);
+    }
+  }
+
+  async function handleExportIcal() {
+    if (!selectedVenue || !selectedSlot || !selectedDate) return;
+    try {
+      const startDate = buildStartDate(selectedDate, selectedSlot.startHHMM);
+      const endDate = buildEndDate(selectedDate, selectedSlot.endHHMM);
+      await exportToIcal({
+        title: `GameOn – ${selectedVenue.name}`,
+        description: `Rezervacija igrišča: ${selectedVenue.name}\nCena: ${selectedSlot.pricePerSlot} €`,
+        location: selectedVenue.location.address ?? selectedVenue.location.name,
+        startDate,
+        endDate,
+      });
+    } catch (e: any) {
+      Alert.alert('Napaka', e.message);
     }
   }
 
@@ -129,6 +177,51 @@ export default function BookVenueScreen() {
   const primary = '#f5c518';
   const textMain = '#fff';
   const textMuted = '#8896aa';
+
+  // ── Booked success screen ────────────────────────────────────────────────
+  if (booked && selectedVenue && selectedSlot && selectedDate) {
+    return (
+      <View style={{ flex: 1, backgroundColor: bg }}>
+        <StatusBar barStyle="light-content" backgroundColor={bg} />
+        <ScrollView contentContainerStyle={{ flex: 1, alignItems: 'center', justifyContent: 'center', padding: 32 }}>
+          <View style={{ width: 80, height: 80, borderRadius: 40, backgroundColor: '#22c55e22', alignItems: 'center', justifyContent: 'center', marginBottom: 20 }}>
+            <Ionicons name="checkmark-circle" size={48} color="#22c55e" />
+          </View>
+          <Text style={{ color: textMain, fontSize: 24, fontWeight: '800', marginBottom: 8, textAlign: 'center' }}>Rezervacija potrjena!</Text>
+          <Text style={{ color: textMuted, fontSize: 15, textAlign: 'center', marginBottom: 32 }}>
+            {selectedVenue.name}{'\n'}{formatDate(selectedDate)}{'\n'}{selectedSlot.startHHMM} – {selectedSlot.endHHMM}
+          </Text>
+
+          {weather && (() => {
+            const { emoji, label } = weatherDescription(weather.weatherCode);
+            return (
+              <View style={{ backgroundColor: card, borderRadius: 12, borderWidth: 1, borderColor: border, padding: 16, marginBottom: 24, alignItems: 'center', width: '100%' }}>
+                <Text style={{ color: textMuted, fontSize: 11, fontWeight: '700', letterSpacing: 1, marginBottom: 8 }}>VREMENSKA NAPOVED OB TERMINU</Text>
+                <Text style={{ fontSize: 36 }}>{emoji}</Text>
+                <Text style={{ color: textMain, fontSize: 16, fontWeight: '700', marginTop: 4 }}>{weather.temperature}°C · {label}</Text>
+                <Text style={{ color: textMuted, fontSize: 12, marginTop: 4 }}>💨 {weather.windSpeed} km/h · 🌧 {weather.precipitation} mm</Text>
+              </View>
+            );
+          })()}
+
+          <TouchableOpacity
+            style={{ backgroundColor: card, borderRadius: 12, borderWidth: 1, borderColor: border, padding: 16, width: '100%', flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10, marginBottom: 12 }}
+            onPress={handleExportIcal}
+          >
+            <Ionicons name="calendar-outline" size={20} color={primary} />
+            <Text style={{ color: primary, fontWeight: '700', fontSize: 15 }}>Dodaj v koledar (.ics)</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={{ backgroundColor: primary, borderRadius: 12, padding: 16, width: '100%', alignItems: 'center' }}
+            onPress={() => navigation.goBack()}
+          >
+            <Text style={{ color: '#0a0e1a', fontWeight: '800', fontSize: 15 }}>Nazaj na začetek</Text>
+          </TouchableOpacity>
+        </ScrollView>
+      </View>
+    );
+  }
 
   return (
     <View style={{ flex: 1, backgroundColor: bg }}>
@@ -291,6 +384,27 @@ export default function BookVenueScreen() {
                 </View>
               </View>
             ))}
+          </View>
+
+          {/* Weather - pod */}
+          <View style={{ backgroundColor: card, borderRadius: 12, borderWidth: 1, borderColor: border, padding: 16, marginBottom: 16 }}>
+            <Text style={{ color: textMuted, fontSize: 11, fontWeight: '700', letterSpacing: 1, marginBottom: 10 }}>VREMENSKA NAPOVED OB TERMINU</Text>
+            {weatherLoading && <ActivityIndicator color={primary} />}
+            {!weatherLoading && weather && (() => {
+              const { emoji, label } = weatherDescription(weather.weatherCode);
+              return (
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 16 }}>
+                  <Text style={{ fontSize: 36 }}>{emoji}</Text>
+                  <View>
+                    <Text style={{ color: textMain, fontSize: 18, fontWeight: '700' }}>{weather.temperature}°C · {label}</Text>
+                    <Text style={{ color: textMuted, fontSize: 12, marginTop: 4 }}>💨 {weather.windSpeed} km/h · 🌧 {weather.precipitation} mm</Text>
+                  </View>
+                </View>
+              );
+            })()}
+            {!weatherLoading && !weather && (
+              <Text style={{ color: textMuted, fontSize: 13 }}>Napoved ni na voljo</Text>
+            )}
           </View>
 
           <View style={{ backgroundColor: primary + '11', borderRadius: 12, borderWidth: 1, borderColor: primary + '33', padding: 14, marginBottom: 24, flexDirection: 'row', gap: 10 }}>
