@@ -84,8 +84,8 @@ export default function BookVenueScreen() {
     setSelectedVenue(venue);
     setLoading(true);
     try {
-      setSchedule(await fetchVenueSchedule(venue.id));
-       /*zakomentiraj zgornjo metodo setSchedule(await fetchVenueSchedule(venue.id));*//*
+      //setSchedule(await fetchVenueSchedule(venue.id));
+       /*zakomentiraj zgornjo metodo setSchedule(await fetchVenueSchedule(venue.id));*/
       const [slots, ...dateReservations] = await Promise.all([
         fetchVenueSchedule(venue.id),
         // Pre-fetch reservations for all weekdays in the schedule
@@ -101,7 +101,7 @@ export default function BookVenueScreen() {
           allReservations.push(...res);
         })
       );
-      setReservations(allReservations);*/
+      setReservations(allReservations);
       setStep('slots');
     } catch (e: any) {
       Alert.alert('Napaka', e.message);
@@ -140,11 +140,11 @@ export default function BookVenueScreen() {
     }
   }
 
-  const isSlotTaken = (slot: ScheduleSlot): boolean => {
+/*  const isSlotTaken = (slot: ScheduleSlot): boolean => {
     return reservations.some(r => r.startHHMM === slot.startHHMM);
-  };
+  };*/
 
-  /* ko to odkomentiraš zakomentiraj metodo nad tem z istim imenom
+  // ko to odkomentiraš zakomentiraj metodo nad tem z istim imenom
   const isSlotTaken = (slot: ScheduleSlot): boolean => {
     const slotDate = getNextDateForWeekday(slot.weekday);
     const slotDateStr = slotDate.toDateString();
@@ -153,7 +153,7 @@ export default function BookVenueScreen() {
       return r.startHHMM === slot.startHHMM && rd.toDateString() === slotDateStr;
     });
   };
-  */ 
+   
 
   async function confirmBooking() {
     if (!selectedVenue || !selectedSlot || !selectedDate) return;
@@ -256,13 +256,12 @@ export default function BookVenueScreen() {
       <StatusBar barStyle="light-content" backgroundColor={bg} />
       <SafeAreaView edges={['top']} style={{ backgroundColor: bg }}>
         <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 12, gap: 12 }}>
-          <TouchableOpacity onPress={() => step === 'venues' ? navigation.goBack() : setStep(step === 'confirm' ? 'slots' : 'venues')}>
-          {/* ko to odkomentiraš zakomentiraj celoten zgornji element TouchableOpacity 
+          {/*<TouchableOpacity onPress={() => step === 'venues' ? navigation.goBack() : setStep(step === 'confirm' ? 'slots' : 'venues')}>*/}
           <TouchableOpacity onPress={() => {
             if (step === 'venues') { navigation.goBack(); }
             else if (step === 'confirm') { setStep('slots'); }
             else if (step === 'slots') { setStep('venues'); setSelectedVenue(null); setSchedule([]); setReservations([]); }
-          }}>*/}
+          }}>
             <Ionicons name="arrow-back" size={24} color={textMain} />
           </TouchableOpacity>
           <Text style={{ color: textMain, fontSize: 20, fontWeight: '800', flex: 1 }}>
