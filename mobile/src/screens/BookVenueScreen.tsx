@@ -242,7 +242,7 @@ export default function BookVenueScreen() {
 
           <TouchableOpacity
             style={{ backgroundColor: primary, borderRadius: 12, padding: 16, width: '100%', alignItems: 'center' }}
-            onPress={() => navigation.goBack()}
+            onPress={() => { setBooked(false); setStep('venues'); setSelectedVenue(null); setSchedule([]); setReservations([]); setSelectedSlot(null); setSelectedDate(null); }}
           >
             <Text style={{ color: '#0a0e1a', fontWeight: '800', fontSize: 15 }}>Nazaj na začetek</Text>
           </TouchableOpacity>
