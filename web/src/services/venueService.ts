@@ -40,4 +40,5 @@ export async function updateVenue(venueId: string, patch: Partial<Venue>): Promi
 
 export async function deleteVenue(venueId: string): Promise<void> {
   await deleteDoc(doc(db, 'venues', venueId));
+  
 }
