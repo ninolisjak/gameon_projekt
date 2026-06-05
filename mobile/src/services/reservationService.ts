@@ -63,7 +63,6 @@ export async function fetchReservationsForDate(
   venueId: string,
   date: Date,
 ): Promise<Reservation[]> {
-  // Simplified query - filter by venueId only, then filter date client-side
   const q = query(
     collection(db, 'reservations'),
     where('venueId', '==', venueId),
@@ -90,11 +89,9 @@ export async function createReservation(data: {
   endHHMM: string;
   price: number;
 }): Promise<string> {
-  // Use transaction to prevent double booking
   const reservationsRef = collection(db, 'reservations');
 
   return runTransaction(db, async tx => {
-    // Fetch all reservations for this venue and check conflict client-side
     const conflictQuery = query(
       reservationsRef,
       where('venueId', '==', data.venueId),

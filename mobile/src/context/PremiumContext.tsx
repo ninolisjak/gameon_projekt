@@ -12,8 +12,6 @@ type PremiumContextValue = {
   buyPremium: () => Promise<void>;
   cancelPremium: () => Promise<void>;
   colors: Colors;
-  // Live values from Firestore once an auth'd Premium user exists; otherwise
-  // fall back to starting baselines.
   elo: number;
   reputation: number;
 };
@@ -24,7 +22,6 @@ export function PremiumProvider({ children }: { children: React.ReactNode }) {
   const [isPremium, setIsPremium] = React.useState(false);
   const [userDoc, setUserDoc] = React.useState<UserDoc | null>(null);
 
-  // Watch auth state so the Firestore subscription always targets the current user.
   React.useEffect(() => {
     let unsubDoc: (() => void) | undefined;
 

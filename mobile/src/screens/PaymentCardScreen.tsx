@@ -127,7 +127,6 @@ export default function PaymentCardScreen() {
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
         >
-          {/* Card preview */}
           <View style={{
             borderRadius: 20, padding: 24, minHeight: 170,
             backgroundColor: colors.primary,
@@ -135,7 +134,6 @@ export default function PaymentCardScreen() {
             shadowRadius: 20, shadowOffset: { width: 0, height: 8 }, elevation: 10,
           }}>
             <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-              {/* Chip */}
               <View style={{
                 width: 42, height: 30, borderRadius: 5,
                 backgroundColor: '#e8c84a',
@@ -146,7 +144,6 @@ export default function PaymentCardScreen() {
                 <View style={{ position: 'absolute', top: 0, bottom: 0, left: 14, width: 1, backgroundColor: '#c9a830' }} />
               </View>
 
-              {/* Card brand */}
               {cardType === 'visa' && (
                 <Text style={{ color: '#fff', fontSize: 22, fontWeight: '900', fontStyle: 'italic', letterSpacing: 1 }}>VISA</Text>
               )}
@@ -189,7 +186,6 @@ export default function PaymentCardScreen() {
             </View>
           </View>
 
-          {/* Form */}
           <View style={{
             backgroundColor: colors.bgElevated, borderRadius: 16, padding: 16,
             borderWidth: 1, borderColor: colors.borderSubtle, gap: 14,
@@ -198,7 +194,6 @@ export default function PaymentCardScreen() {
               Podatki kartice
             </Text>
 
-            {/* Card number */}
             <View>
               <Text style={{ color: colors.textMuted, fontSize: 12, marginBottom: 6 }}>Številka kartice</Text>
               <View style={{
@@ -220,7 +215,6 @@ export default function PaymentCardScreen() {
               </View>
             </View>
 
-            {/* Expiry + CVC */}
             <View style={{ flexDirection: 'row', gap: 12 }}>
               <View style={{ flex: 1 }}>
                 <Text style={{ color: colors.textMuted, fontSize: 12, marginBottom: 6 }}>Veljavnost</Text>
@@ -261,7 +255,6 @@ export default function PaymentCardScreen() {
               </View>
             </View>
 
-            {/* Name */}
             <View>
               <Text style={{ color: colors.textMuted, fontSize: 12, marginBottom: 6 }}>Ime imetnika kartice</Text>
               <View style={{
@@ -281,7 +274,6 @@ export default function PaymentCardScreen() {
             </View>
           </View>
 
-          {/* Pay button */}
           <TouchableOpacity
             onPress={handlePay}
             disabled={!isFormValid || processing}

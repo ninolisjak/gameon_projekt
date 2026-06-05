@@ -60,7 +60,7 @@ export default function CreateMatchScreen() {
         setPendingLat(pos.coords.latitude);
         setPendingLng(pos.coords.longitude);
       }
-    } catch { /* user location optional */ }
+    } catch {}
   }
 
   function confirmMapPick() {
@@ -435,7 +435,7 @@ export default function CreateMatchScreen() {
                   setPendingLat(la);
                   setPendingLng(ln);
                 }
-              } catch { /* ignore */ }
+              } catch {}
             }}
             style={{ flex: 1 }}
           />

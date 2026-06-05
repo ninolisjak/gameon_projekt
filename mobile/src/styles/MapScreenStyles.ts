@@ -4,10 +4,8 @@ import { Colors } from './theme';
 export const makeStyles = (colors: Colors) => StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.bg },
 
-  // Map fills the entire screen
   map: { ...StyleSheet.absoluteFillObject },
 
-  // Navbar floats on top — map shows through the rounded corners
   bannerWrap: {
     position: 'absolute', top: 0, left: 0, right: 0,
     zIndex: 10,
@@ -63,7 +61,6 @@ export const makeStyles = (colors: Colors) => StyleSheet.create({
     alignSelf: 'center', marginLeft: 4,
   },
 
-  // Locate button — floats over map
   locationBtn: {
     position: 'absolute', right: 16, bottom: 100,
     backgroundColor: colors.bgElevated, borderRadius: 22,
@@ -73,7 +70,6 @@ export const makeStyles = (colors: Colors) => StyleSheet.create({
     zIndex: 5,
   },
 
-  // Match card — floats above bottom nav
   card: {
     position: 'absolute', left: 12, right: 12, bottom: 86,
     backgroundColor: colors.bgElevated, borderRadius: 20,
@@ -116,7 +112,6 @@ export const makeStyles = (colors: Colors) => StyleSheet.create({
   fullBadgeText: { color: colors.danger, fontSize: 10, fontWeight: '700', letterSpacing: 0.5 },
   cardArrow: { padding: 10, backgroundColor: colors.primaryTint, borderRadius: 12 },
 
-  // Bottom nav floats at the bottom
   bottomNav: {
     position: 'absolute', left: 0, right: 0, bottom: 0,
     flexDirection: 'row', alignItems: 'center',

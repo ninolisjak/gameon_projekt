@@ -5,7 +5,6 @@ export type WeatherData = {
   precipitation: number;
 };
 
-// Open-Meteo WMO weather codes → opis in emoji
 export function weatherDescription(code: number): { label: string; emoji: string } {
   if (code === 0) return { label: 'Jasno', emoji: '☀️' };
   if (code <= 2) return { label: 'Delno oblačno', emoji: '⛅' };

@@ -36,11 +36,9 @@ export default function MatchDetailsScreen() {
   const [userId, setUserId] = React.useState<string>(auth.currentUser?.uid ?? 'niko');
   const [userNames, setUserNames] = React.useState<Map<string, string>>(new Map());
 
-  // Track previous Firestore values to detect transitions and fire local notifications
   const prevStartRequestedRef = React.useRef<boolean | null>(null);
   const prevMatchStartedRef = React.useRef<boolean | null>(null);
   const prevCancelledRef = React.useRef<boolean | null>(null);
-  // Always-fresh match ref for setTimeout callback
   const matchRef = React.useRef<Match | null>(null);
   React.useEffect(() => { matchRef.current = match; }, [match]);
 
@@ -81,7 +79,6 @@ export default function MatchDetailsScreen() {
     return () => clearTimeout(timer);
   }, [match?.id]);
 
-  // Local notification: start requested
   React.useEffect(() => {
     if (!match) return;
     const cur = !!match.startRequested;
@@ -368,7 +365,6 @@ export default function MatchDetailsScreen() {
             </View>
           )}
 
-          {/* Rental cost card */}
           <TouchableOpacity
             style={[styles.playersCard, { flexDirection: 'row', alignItems: 'center', gap: 12 }]}
             onPress={() => navigation.navigate('CostSplit', { matchId: match.id })}
@@ -538,5 +534,4 @@ export default function MatchDetailsScreen() {
       </View>
     </View>
   );
-  //test
 }

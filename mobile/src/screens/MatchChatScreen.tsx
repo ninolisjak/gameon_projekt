@@ -184,14 +184,12 @@ export default function MatchChatScreen() {
           }
         />
 
-        {/* Input bar */}
         <View style={{
           flexDirection: 'row', alignItems: 'flex-end', gap: 8,
           paddingHorizontal: 12, paddingVertical: 10,
           backgroundColor: colors.bgElevated,
           borderTopWidth: 1, borderTopColor: colors.borderSubtle,
         }}>
-          {/* GIF button */}
           <TouchableOpacity
             onPress={() => setShowGiphy(true)}
             style={{
@@ -203,7 +201,6 @@ export default function MatchChatScreen() {
             <Text style={{ color: colors.primary, fontSize: 11, fontWeight: '900' }}>GIF</Text>
           </TouchableOpacity>
 
-          {/* Image button */}
           <TouchableOpacity
             onPress={handlePickImage}
             disabled={uploadingImage}
@@ -218,7 +215,6 @@ export default function MatchChatScreen() {
               : <Ionicons name="image-outline" size={20} color={colors.primary} />}
           </TouchableOpacity>
 
-          {/* Text input */}
           <View style={{
             flex: 1, flexDirection: 'row', alignItems: 'flex-end',
             backgroundColor: colors.bg, borderRadius: 20,
@@ -236,7 +232,6 @@ export default function MatchChatScreen() {
             />
           </View>
 
-          {/* Send button */}
           <TouchableOpacity
             onPress={handleSendText}
             disabled={!text.trim() || sending}

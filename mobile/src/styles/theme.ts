@@ -49,5 +49,4 @@ export function getColors(isPremium: boolean): Colors {
   return isPremium ? premiumColors : standardColors;
 }
 
-// Default palette kept for any non-themed module that imports `colors` directly.
 export const colors: Colors = standardColors;

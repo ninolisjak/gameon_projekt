@@ -84,14 +84,10 @@ export default function BookVenueScreen() {
     setSelectedVenue(venue);
     setLoading(true);
     try {
-      //setSchedule(await fetchVenueSchedule(venue.id));
-       /*zakomentiraj zgornjo metodo setSchedule(await fetchVenueSchedule(venue.id));*/
       const [slots, ...dateReservations] = await Promise.all([
         fetchVenueSchedule(venue.id),
-        // Pre-fetch reservations for all weekdays in the schedule
       ]);
       setSchedule(slots);
-      // Fetch reservations for each unique weekday in the schedule
       const weekdays = [...new Set(slots.map(s => s.weekday))];
       const allReservations: Reservation[] = [];
       await Promise.all(
@@ -140,11 +136,6 @@ export default function BookVenueScreen() {
     }
   }
 
-/*  const isSlotTaken = (slot: ScheduleSlot): boolean => {
-    return reservations.some(r => r.startHHMM === slot.startHHMM);
-  };*/
-
-  // ko to odkomentiraš zakomentiraj metodo nad tem z istim imenom
   const isSlotTaken = (slot: ScheduleSlot): boolean => {
     const slotDate = getNextDateForWeekday(slot.weekday);
     const slotDateStr = slotDate.toDateString();
@@ -206,7 +197,6 @@ export default function BookVenueScreen() {
   const textMain = '#fff';
   const textMuted = '#8896aa';
 
-  // ── Booked success screen ────────────────────────────────────────────────
   if (booked && selectedVenue && selectedSlot && selectedDate) {
     return (
       <View style={{ flex: 1, backgroundColor: bg }}>
@@ -256,7 +246,6 @@ export default function BookVenueScreen() {
       <StatusBar barStyle="light-content" backgroundColor={bg} />
       <SafeAreaView edges={['top']} style={{ backgroundColor: bg }}>
         <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 12, gap: 12 }}>
-          {/*<TouchableOpacity onPress={() => step === 'venues' ? navigation.goBack() : setStep(step === 'confirm' ? 'slots' : 'venues')}>*/}
           <TouchableOpacity onPress={() => {
             if (step === 'venues') { navigation.goBack(); }
             else if (step === 'confirm') { setStep('slots'); }
@@ -336,7 +325,6 @@ export default function BookVenueScreen() {
         </ScrollView>
       )}
 
-      {/* STEP 2: Schedule slots */}
       {!loading && step === 'slots' && (
         <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 40 }}>
           <Text style={{ color: textMuted, fontSize: 13, marginBottom: 16 }}>
@@ -396,7 +384,6 @@ export default function BookVenueScreen() {
         </ScrollView>
       )}
 
-      {/* STEP 3: Confirm */}
       {!loading && step === 'confirm' && selectedVenue && selectedSlot && selectedDate && (
         <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 40 }}>
           <View style={{ backgroundColor: card, borderRadius: 16, borderWidth: 1, borderColor: border, padding: 24, marginBottom: 16 }}>
@@ -419,7 +406,6 @@ export default function BookVenueScreen() {
             ))}
           </View>
 
-          {/* Weather - pod */}
           <View style={{ backgroundColor: card, borderRadius: 12, borderWidth: 1, borderColor: border, padding: 16, marginBottom: 16 }}>
             <Text style={{ color: textMuted, fontSize: 11, fontWeight: '700', letterSpacing: 1, marginBottom: 10 }}>VREMENSKA NAPOVED OB TERMINU</Text>
             {weatherLoading && <ActivityIndicator color={primary} />}

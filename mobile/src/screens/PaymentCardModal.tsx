@@ -138,7 +138,6 @@ export default function PaymentCardModal({
             keyboardShouldPersistTaps="handled"
             showsVerticalScrollIndicator={false}
           >
-            {/* Card preview */}
             <View style={{
               borderRadius: 20, padding: 24, minHeight: 170,
               backgroundColor: colors.primary,
@@ -190,7 +189,6 @@ export default function PaymentCardModal({
               </View>
             </View>
 
-            {/* Form */}
             <View style={{
               backgroundColor: colors.bgElevated, borderRadius: 16, padding: 16,
               borderWidth: 1, borderColor: colors.borderSubtle, gap: 14,

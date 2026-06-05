@@ -9,8 +9,6 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { makeStyles } from '../styles/MapScreenStyles';
 import { auth } from '../config/firebase';
 import { useColors } from '../context/PremiumContext';
-import { doc, getDocs, getDoc,  collection,  } from 'firebase/firestore';
-import { db } from '../config/firebase'
 
 type Match = {
   id: string;
@@ -126,53 +124,8 @@ export default function MapScreen() {
   const colors = useColors();
   const styles = React.useMemo(() => makeStyles(colors), [colors]);
 
-  // 1. Definicija funkcije za izpis JSON-a
-/*  async function logDocumentAsJson(venueId: string) {
-    try {
-      // 1. Pridobi glavne podatke o igrišču (venue)
-      const venueRef = doc(db, 'venues', venueId);
-      const venueSnap = await getDoc(venueRef);
-
-      if (!venueSnap.exists()) {
-        console.log(`Igrišče z ID-jem ${venueId} ne obstaja v zbirki 'venues'!`);
-        return;
-      }
-
-      const venueData = venueSnap.data();
-
-      // 2. Pridobi vse dokumente iz podzbirke 'schedule' znotraj tega igrišča
-      const scheduleRef = collection(db, 'venues', venueId, 'schedule');
-      const scheduleSnap = await getDocs(scheduleRef);
-      
-      const scheduleList: any[] = [];
-      scheduleSnap.forEach((doc) => {
-        scheduleList.push({
-          id: doc.id,
-          ...doc.data()
-        });
-      });
-
-      // 3. Združi podatke v enoten objekt
-      const fullVenueObject = {
-        id: venueSnap.id,
-        ...venueData,
-        schedule: scheduleList // Tukaj dodamo celoten urnik
-      };
-
-      // 4. Izpis celotnega rezultata v konzolo
-      console.log("============== FIRESTORE VENUE + SCHEDULE JSON ==============");
-      console.log(JSON.stringify(fullVenueObject, null, 2));
-      console.log("=============================================================");
-
-    } catch (error) {
-      console.error("Napaka pri pridobivanju celotnih podatkov igrišča:", error);
-    }
-  
-  }
-*/
   useFocusEffect(
     React.useCallback(() => {
-      //logDocumentAsJson('LaMTb3trnoIlweak4SEe');
       const userId = auth.currentUser?.uid ?? '';
       return subscribeMatches(userId, setMatches);
     }, [])
@@ -207,7 +160,14 @@ export default function MapScreen() {
       const pos = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
       setMapCenter({ lat: pos.coords.latitude, lng: pos.coords.longitude });
     } catch {
-      Alert.alert('Lokacija ni dostopna', 'Preveri ali so lokacijske storitve vklopljene.');
+      try {
+        const last = await Location.getLastKnownPositionAsync();
+        if (last) {
+          setMapCenter({ lat: last.coords.latitude, lng: last.coords.longitude });
+          return;
+        }
+      } catch {}
+      Alert.alert('Lokacija ni dostopna', 'Preveri ali so lokacijske storitve vklopljene in poskusi znova.');
     }
   }
 
@@ -226,7 +186,6 @@ export default function MapScreen() {
     <View style={styles.container}>
       <StatusBar barStyle="light-content" backgroundColor={colors.primary} translucent={false} />
 
-      {/* Map fills the entire screen */}
       <WebView
         source={{ html: mapHtml }}
         style={styles.map}
@@ -235,7 +194,6 @@ export default function MapScreen() {
         originWhitelist={['*']}
       />
 
-      {/* Navbar floats on top — map shows through rounded corners */}
       <SafeAreaView edges={['top']} style={styles.bannerWrap} pointerEvents="box-none">
         <View style={styles.banner}>
           <View style={styles.bannerTopRow}>
@@ -294,12 +252,10 @@ export default function MapScreen() {
         </View>
       </SafeAreaView>
 
-      {/* Locate button */}
       <TouchableOpacity style={styles.locationBtn} onPress={handleLocate}>
         <Ionicons name="locate-outline" size={20} color={colors.primaryLight} />
       </TouchableOpacity>
 
-      {/* Match card — only visible after tapping a marker */}
       {selected && (
         <TouchableOpacity
           style={styles.card}
@@ -358,7 +314,6 @@ export default function MapScreen() {
         </TouchableOpacity>
       )}
 
-      {/* Bottom nav floats at the bottom */}
       <View style={styles.bottomNav}>
         <TouchableOpacity style={styles.navItem} activeOpacity={0.7}>
           <View style={styles.navIconWrap}>

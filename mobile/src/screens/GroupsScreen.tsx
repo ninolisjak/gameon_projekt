@@ -26,14 +26,13 @@ export default function GroupsScreen() {
   const [joining, setJoining] = React.useState(false);
   const [expanded, setExpanded] = React.useState<string | null>(null);
 
-  // Create form state
   const [name, setName] = React.useState('');
   const [sport, setSport] = React.useState<'futsal' | 'basketball'>('futsal');
   const [locationName, setLocationName] = React.useState('');
   const [lat, setLat] = React.useState('46.5547');
   const [lng, setLng] = React.useState('15.6459');
   const [totalSpots, setTotalSpots] = React.useState(10);
-  const [weekday, setWeekday] = React.useState(5); // Pet
+  const [weekday, setWeekday] = React.useState(5);
   const [timeHHMM, setTimeHHMM] = React.useState('18:00');
   const [minQuorum, setMinQuorum] = React.useState(6);
   const [creating, setCreating] = React.useState(false);
@@ -43,7 +42,6 @@ React.useEffect(() => {
       setGroups(gs);
       const newSlots: Record<string, RecurringSlot[]> = {};
       
-      // getSlotsForGroup je zdaj asinhrona funkcija (Firebase), zato jo moramo počakati
       await Promise.all(
         gs.map(async (g) => {
           newSlots[g.id] = await getSlotsForGroup(g.id);
@@ -194,7 +192,6 @@ React.useEffect(() => {
         })}
       </ScrollView>
 
-      {/* Modal: Join group */}
       <Modal visible={showJoin} transparent animationType="slide" onRequestClose={() => setShowJoin(false)}>
         <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.7)', justifyContent: 'flex-end' }}>
           <View style={{ backgroundColor: card, borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: 24 }}>
@@ -218,7 +215,6 @@ React.useEffect(() => {
         </View>
       </Modal>
 
-      {/* Modal: Create group */}
       <Modal visible={showCreate} transparent animationType="slide" onRequestClose={() => setShowCreate(false)}>
         <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.7)', justifyContent: 'flex-end' }}>
           <ScrollView style={{ backgroundColor: card, borderTopLeftRadius: 20, borderTopRightRadius: 20 }} contentContainerStyle={{ padding: 24 }} keyboardShouldPersistTaps="handled">

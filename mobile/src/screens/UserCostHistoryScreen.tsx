@@ -75,7 +75,8 @@ export default function UserCostHistoryScreen() {
 
   const totalUnpaid = unpaidMatches.reduce((s, e) => s + e.perPerson, 0);
   const totalReserv = reservations.filter(e => !e.data.paid).reduce((s, e) => s + e.data.price, 0);
-  const totalPaid   = paidMatches.reduce((s, e) => s + e.perPerson, 0);
+  const paidReservations = reservations.filter(e => e.data.paid);
+  const totalPaid   = paidMatches.reduce((s, e) => s + e.perPerson, 0) + paidReservations.reduce((s, e) => s + e.data.price, 0);
 
   function renderMatchRow(e: MatchEntry) {
     const m = e.data;
@@ -198,7 +199,7 @@ export default function UserCostHistoryScreen() {
             <View style={{ flex: 1, backgroundColor: 'rgba(255,255,255,0.15)', borderRadius: 14, padding: 12, alignItems: 'center' }}>
               <Text style={{ color: 'rgba(255,255,255,0.7)', fontSize: 10, fontWeight: '800', letterSpacing: 1, textTransform: 'uppercase' }}>Plačano</Text>
               <Text style={{ color: '#fff', fontSize: 22, fontWeight: '900', marginTop: 4 }}>{fmt(totalPaid)} €</Text>
-              <Text style={{ color: 'rgba(255,255,255,0.6)', fontSize: 11, marginTop: 2 }}>{paidMatches.length} vnos.</Text>
+              <Text style={{ color: 'rgba(255,255,255,0.6)', fontSize: 11, marginTop: 2 }}>{paidMatches.length + paidReservations.length} vnos.</Text>
             </View>
           </View>
         )}

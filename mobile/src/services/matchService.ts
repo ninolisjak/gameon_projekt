@@ -9,7 +9,6 @@ import { balanceTeams, userToBalanceInput, BalanceInput } from './teamBalancer';
 import { applyReputationChange, REP_DELTA } from './reputationService';
 import { syncBadges } from './badgeService';
 
-// ── Types ──────────────────────────────────────────────────────────────────
 export type MatchResult = 'pending' | 'team_a_won' | 'team_b_won' | 'draw';
 
 export type PendingEvent = {
@@ -158,7 +157,6 @@ export type UserDoc = {
   matchesPlayed?: number;
   goals?: number;
 
-  // Badge collection / profile customization
   unlockedBadges?: string[];
   selectedBadge?: string | null;
 };
@@ -194,7 +192,6 @@ function getOpen(currentUserId?: string): Match[] {
   return store.filter(m => {
     if (m.status === 'closed') return false;
     if (!m.isPrivate) return m.isPublic;
-    // Private match: show only to players who are already in it
     return currentUserId ? m.players.includes(currentUserId) : false;
   });
 }
@@ -605,7 +602,6 @@ export async function getGroupsForUser(userId: string) {
   return snap.docs.map(d => ({ ...d.data(), id: d.id } as RecurringGroup));
 }
 
-// Premium Features (Firestore)
 export async function swapTeam(matchId: string, userId: string, requesterId: string) {
   const ref = doc(db, 'matches', matchId);
   await runTransaction(db, async tx => {
@@ -741,7 +737,7 @@ export async function finalizeMatch(matchId: string, requesterId: string) {
           const d = usnap.data() as UserDoc;
           return { uid, elo: d.elo ?? STARTING_ELO, reputation: d.reputation ?? STARTING_REPUTATION };
         }
-      } catch { /* no user doc yet */ }
+      } catch {}
       return { uid, elo: STARTING_ELO, reputation: STARTING_REPUTATION };
     })
   );
@@ -841,8 +837,6 @@ export async function finalizeMatch(matchId: string, requesterId: string) {
 }
 
 
-// ── Rental cost splitting ─────────────────────────────────────────────────────
-
 export async function setMatchRentalCost(matchId: string, cost: number, creatorId: string) {
   const ref = doc(db, 'matches', matchId);
   await runTransaction(db, async tx => {
@@ -862,20 +856,17 @@ export async function markPlayerPayment(matchId: string, playerId: string, statu
 }
 
 export async function fetchUserCostHistory(userId: string): Promise<Match[]> {
-  // Only one inequality field to avoid needing a composite Firestore index
   const q = query(collection(db, 'matches'), where('players', 'array-contains', userId));
   const snap = await getDocs(q);
   return snap.docs
     .map(d => ({ ...d.data(), id: d.id } as Match))
-    .filter(m => (m.rentalCost ?? 0) > 0)          // client-side filter
+    .filter(m => (m.rentalCost ?? 0) > 0)
     .sort((a, b) => {
       const tA = a.datetime?.toDate ? a.datetime.toDate().getTime() : new Date(a.datetime).getTime();
       const tB = b.datetime?.toDate ? b.datetime.toDate().getTime() : new Date(b.datetime).getTime();
       return tB - tA;
     });
 }
-
-// ── Invite eligible players ───────────────────────────────────────────────────
 
 export async function fetchInvitablePlayers(
   minElo: number,
@@ -973,7 +964,7 @@ async function fetchBalanceInputs(uids: string[]): Promise<BalanceInput[]> {
       if (snap.exists()) {
         return userToBalanceInput({ ...(snap.data() as UserDoc), uid });
       }
-    } catch { /* fall through */ }
+    } catch {}
     return { uid, elo: STARTING_ELO, winRate: 0.5, matchesPlayed: 0 } as BalanceInput;
   }));
   return inputs;
@@ -1113,13 +1104,11 @@ export function subscribeMatch(matchId: string, onData: (m: Match | null) => voi
 }
 
 export function subscribeMatches(userId: string, onData: (ms: Match[]) => void) {
-  // Query 1: public matches
   const publicQ = query(
     collection(db, 'matches'),
     where('isPublic', '==', true),
     where('isPrivate', '==', false)
   );
-  // Query 2: private matches where user is a player
   const privateQ = query(
     collection(db, 'matches'),
     where('isPrivate', '==', true),
@@ -1245,8 +1234,6 @@ export function subscribeUserDoc(uid: string, onData: (u: UserDoc | null) => voi
   }, err => onError?.(err));
 }
 
-// ─── Demo seed ────────────────────────────────────────────────────────────────
-
 export const DEMO_USERS = ['ana', 'marc', 'luka', 'niko'] as const;
 
 (function seedDemo() {
@@ -1271,8 +1258,6 @@ export const DEMO_USERS = ['ana', 'marc', 'luka', 'niko'] as const;
     isPremium: false,
   });
 })();
-
-// ── Stripe Checkout ───────────────────────────────────────────────────────────
 
 export async function createStripePaymentIntent(
   amount: number,

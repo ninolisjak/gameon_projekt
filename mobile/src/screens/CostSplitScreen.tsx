@@ -147,7 +147,6 @@ export default function CostSplitScreen() {
 
       <ScrollView contentContainerStyle={{ padding: 20, gap: 16 }} showsVerticalScrollIndicator={false}>
 
-        {/* Cost input card — creator only */}
         {isCreator && (
           <View style={{
             backgroundColor: colors.bgElevated, borderRadius: 16, padding: 16,
@@ -202,7 +201,6 @@ export default function CostSplitScreen() {
           </View>
         )}
 
-        {/* Player list */}
         {hasCost ? (
           <View style={{ backgroundColor: colors.bgElevated, borderRadius: 16, padding: 16, borderWidth: 1, borderColor: colors.borderSubtle }}>
             <Text style={{ color: colors.textMuted, fontSize: 11, fontWeight: '800', letterSpacing: 1.2, textTransform: 'uppercase', marginBottom: 4 }}>
@@ -262,7 +260,6 @@ export default function CostSplitScreen() {
               );
             })}
 
-            {/* Summary footer */}
             <View style={{
               marginTop: 12, paddingTop: 12,
               borderTopWidth: 1, borderTopColor: colors.borderSubtle,
