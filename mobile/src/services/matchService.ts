@@ -7,6 +7,7 @@ import { db, functions, auth } from '../config/firebase';
 import { httpsCallable } from 'firebase/functions';
 import { balanceTeams, userToBalanceInput, BalanceInput } from './teamBalancer';
 import { applyReputationChange, REP_DELTA } from './reputationService';
+import { syncBadges } from './badgeService';
 
 // ── Types ──────────────────────────────────────────────────────────────────
 export type MatchResult = 'pending' | 'team_a_won' | 'team_b_won' | 'draw';
@@ -155,6 +156,11 @@ export type UserDoc = {
   losses?: number;
   draws?: number;
   matchesPlayed?: number;
+  goals?: number;
+
+  // Badge collection / profile customization
+  unlockedBadges?: string[];
+  selectedBadge?: string | null;
 };
 
 export type JoinResult =
@@ -798,6 +804,7 @@ export async function finalizeMatch(matchId: string, requesterId: string) {
         updatedAt: Timestamp.now(),
         matchesPlayed: increment(1),
       };
+      if (u.goals > 0) userPatch.goals = increment(u.goals);
       if (u.isWin) userPatch.wins = increment(1);
       else if (u.isLoss) userPatch.losses = increment(1);
       else if (u.isDraw) userPatch.draws = increment(1);
@@ -824,6 +831,7 @@ export async function finalizeMatch(matchId: string, requesterId: string) {
         createdAt: Timestamp.now(),
       };
       await addDoc(collection(db, 'users', u.uid, 'matchHistory'), historyEntry);
+      await syncBadges(u.uid);
     })
   );
 

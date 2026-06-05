@@ -11,6 +11,9 @@ import {
   ReputationEntry, MatchHistoryEntry, getMatchHistory, MatchOutcome,
 } from '../services/matchService';
 import { getReputationHistory, reasonLabel } from '../services/reputationService';
+import {
+  BADGES, TIER_META, getBadge, selectBadge, syncBadges,
+} from '../services/badgeService';
 
 const PREMIUM_BENEFITS = [
   'Prednostna uvrstitev pri iskanju tekem',
@@ -75,6 +78,9 @@ export default function ProfileScreen() {
   const [matches, setMatches] = React.useState<MatchHistoryEntry[]>([]);
   const [matchesLoading, setMatchesLoading] = React.useState(false);
   const [matchesExpanded, setMatchesExpanded] = React.useState(false);
+  const [unlockedBadges, setUnlockedBadges] = React.useState<string[]>([]);
+  const [selectedBadge, setSelectedBadge] = React.useState<string | null>(null);
+  const [collectionExpanded, setCollectionExpanded] = React.useState(false);
 
   React.useEffect(() => {
     const uid = auth.currentUser?.uid;
@@ -91,6 +97,17 @@ export default function ProfileScreen() {
     });
     return unsub;
   }, [isPremium]);
+
+  React.useEffect(() => {
+    const uid = auth.currentUser?.uid;
+    if (!uid) return;
+    syncBadges(uid).catch(() => {});
+    const unsub = subscribeUserDoc(uid, d => {
+      setUnlockedBadges(d?.unlockedBadges ?? []);
+      setSelectedBadge(d?.selectedBadge ?? null);
+    });
+    return unsub;
+  }, []);
 
   React.useEffect(() => {
     const uid = auth.currentUser?.uid;
@@ -121,6 +138,18 @@ export default function ProfileScreen() {
       Alert.alert('Napaka', e?.message ?? 'Shranjevanje pozicije ni uspelo.');
     } finally {
       setSavingPos(false);
+    }
+  }
+
+  async function handleSelectBadge(badgeId: string) {
+    const uid = auth.currentUser?.uid;
+    if (!uid) return;
+    const next = selectedBadge === badgeId ? null : badgeId;
+    setSelectedBadge(next);
+    try {
+      await selectBadge(uid, next);
+    } catch (e: any) {
+      Alert.alert('Napaka', e?.message ?? 'Shranjevanje naziva ni uspelo.');
     }
   }
 
@@ -183,6 +212,16 @@ export default function ProfileScreen() {
             <View style={{ flex: 1 }}>
               <Text style={styles.name} numberOfLines={1}>{displayName}</Text>
               <Text style={styles.email} numberOfLines={1}>{email}</Text>
+              {(() => {
+                const badge = selectedBadge ? getBadge(selectedBadge) : undefined;
+                if (!badge) return null;
+                return (
+                  <View style={[styles.premiumChip, { backgroundColor: TIER_META[badge.tier].color + '40' }]}>
+                    <Ionicons name={badge.icon as any} size={12} color="#fff" />
+                    <Text style={styles.premiumChipText}>{badge.title.toUpperCase()}</Text>
+                  </View>
+                );
+              })()}
               {isPremium && (
                 <View style={styles.premiumChip}>
                   <Ionicons name="star" size={12} color="#fff" />
@@ -194,6 +233,76 @@ export default function ProfileScreen() {
         </SafeAreaView>
 
         <View style={styles.body}>
+          <View>
+            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+              <Text style={styles.sectionLabel}>Zbirka značk</Text>
+              <Text style={{ color: colors.primaryLight, fontSize: 12, fontWeight: '700' }}>
+                {unlockedBadges.length} / {BADGES.length}
+              </Text>
+            </View>
+            <Text style={{ color: colors.textMuted, fontSize: 12, marginTop: -4, marginBottom: 12 }}>
+              Tapni odklenjeno značko, da jo prikažeš kot naziv na profilu.
+            </Text>
+            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 10 }}>
+              {(collectionExpanded ? BADGES : BADGES.slice(0, 6)).map(badge => {
+                const isUnlocked = unlockedBadges.includes(badge.id);
+                const isSelected = selectedBadge === badge.id;
+                const tierColor = TIER_META[badge.tier].color;
+                return (
+                  <TouchableOpacity
+                    key={badge.id}
+                    onPress={() => isUnlocked && handleSelectBadge(badge.id)}
+                    disabled={!isUnlocked}
+                    activeOpacity={0.85}
+                    style={{
+                      width: '47%',
+                      flexDirection: 'row', alignItems: 'center', gap: 10,
+                      padding: 12, borderRadius: 14,
+                      backgroundColor: colors.bgElevated,
+                      borderWidth: isSelected ? 2 : 1,
+                      borderColor: isSelected ? tierColor : colors.border,
+                      opacity: isUnlocked ? 1 : 0.5,
+                    }}
+                  >
+                    <View style={{
+                      width: 40, height: 40, borderRadius: 12,
+                      backgroundColor: isUnlocked ? tierColor + '22' : colors.bgSelected,
+                      alignItems: 'center', justifyContent: 'center',
+                    }}>
+                      <Ionicons
+                        name={(isUnlocked ? badge.icon : 'lock-closed') as any}
+                        size={18}
+                        color={isUnlocked ? tierColor : colors.textFaint}
+                      />
+                    </View>
+                    <View style={{ flex: 1 }}>
+                      <Text
+                        numberOfLines={1}
+                        style={{ color: isUnlocked ? colors.text : colors.textMuted, fontWeight: '800', fontSize: 13 }}
+                      >
+                        {badge.title}
+                      </Text>
+                      <Text numberOfLines={1} style={{ color: colors.textMuted, fontSize: 10, marginTop: 2 }}>
+                        {isSelected ? 'Izbran naziv' : badge.description}
+                      </Text>
+                    </View>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+            {BADGES.length > 6 && (
+              <TouchableOpacity
+                onPress={() => setCollectionExpanded(v => !v)}
+                style={{ alignSelf: 'center', marginTop: 12, padding: 8 }}
+                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+              >
+                <Text style={{ color: colors.primaryLight, fontSize: 12, fontWeight: '700' }}>
+                  {collectionExpanded ? 'Skrij' : `Prikaži vse (${BADGES.length})`}
+                </Text>
+              </TouchableOpacity>
+            )}
+          </View>
+
           {isPremium && (
             <View>
               <Text style={styles.sectionLabel}>Statistika</Text>
