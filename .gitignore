@@ -12,8 +12,10 @@ ui-debug.log
 
 # Environment
 .env
+**/.env
 .env.local
 .env.*.local
+.runtimeconfig.json
 
 # Build output
 dist/

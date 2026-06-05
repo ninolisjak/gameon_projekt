@@ -4,8 +4,7 @@ const Stripe = require('stripe');
 
 admin.initializeApp();
 
-const STRIPE_SECRET_KEY = 'sk_test_51TcLoI2KFeERiZb4CwSSZQZ7L2BvABLR7PZGuUiJQxzrMejFlAyVEVdQGNrorHXrpz0gQGDXiuWmcknN5HnUcumm00eCXey9qH';
-const stripe = new Stripe(STRIPE_SECRET_KEY);
+const stripe = new Stripe(process.env.STRIPE_SECRET);
 
 const SUCCESS_BASE = 'https://gameon-9d876.firebaseapp.com/payment-success';
 const CANCEL_URL   = 'https://gameon-9d876.firebaseapp.com/payment-cancel';
