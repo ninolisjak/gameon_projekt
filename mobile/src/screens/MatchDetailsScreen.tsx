@@ -225,6 +225,15 @@ export default function MatchDetailsScreen() {
             <TouchableOpacity style={styles.backBtn} onPress={() => navigation.goBack()}>
               <Ionicons name="arrow-back" size={20} color="#fff" />
             </TouchableOpacity>
+            <TouchableOpacity
+              onPress={() => navigation.navigate('MatchChat', {
+                matchId: match.id,
+                matchName: match.location?.name ?? 'Tekma',
+              })}
+              style={{ width: 38, height: 38, borderRadius: 19, backgroundColor: 'rgba(255,255,255,0.18)', alignItems: 'center', justifyContent: 'center' }}
+            >
+              <Ionicons name="chatbubble-ellipses-outline" size={20} color="#fff" />
+            </TouchableOpacity>
             <View style={styles.statusPill}>
               <View style={[styles.statusDot, { backgroundColor: isFull ? '#ef4444' : '#22c55e' }]} />
               <Text style={styles.statusText}>{isFull ? 'POLNO' : 'ODPRTO'}</Text>

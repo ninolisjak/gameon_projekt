@@ -16,9 +16,12 @@ import ProfileScreen from './src/screens/ProfileScreen';
 import GroupsScreen from './src/screens/GroupsScreen';
 import BookVenueScreen from './src/screens/BookVenueScreen';
 import CostSplitScreen from './src/screens/CostSplitScreen';
+import MatchChatScreen from './src/screens/MatchChatScreen';
 import UserCostHistoryScreen from './src/screens/UserCostHistoryScreen';
 import PaymentCardScreen from './src/screens/PaymentCardScreen';
 import { makeDrawerStyles } from './src/styles/AppStyles';
+import { StripeProvider } from '@stripe/stripe-react-native';
+import { STRIPE_PUBLISHABLE_KEY } from './src/config/stripeConfig';
 import { PremiumProvider, useColors } from './src/context/PremiumContext';
 import { ensureUserDoc } from './src/services/matchService';
 import { registerForPushNotificationsAsync } from './src/services/notificationService';
@@ -55,6 +58,7 @@ function MainStack() {
       <Stack.Screen name="BookVenue" component={BookVenueScreen} />
       <Stack.Screen name="CostSplit" component={CostSplitScreen} />
       <Stack.Screen name="PaymentCard" component={PaymentCardScreen} />
+      <Stack.Screen name="MatchChat" component={MatchChatScreen} />
     </Stack.Navigator>
   );
 }
@@ -152,12 +156,14 @@ export default function App() {
   }
 
   return (
-    <PremiumProvider>
-      <SafeAreaProvider>
-        <NavigationContainer>
-          {user ? <MainDrawer /> : <LoginScreen />}
-        </NavigationContainer>
-      </SafeAreaProvider>
-    </PremiumProvider>
+    <StripeProvider publishableKey={STRIPE_PUBLISHABLE_KEY} merchantIdentifier="merchant.com.RISacc.gameontest">
+      <PremiumProvider>
+        <SafeAreaProvider>
+          <NavigationContainer>
+            {user ? <MainDrawer /> : <LoginScreen />}
+          </NavigationContainer>
+        </SafeAreaProvider>
+      </PremiumProvider>
+    </StripeProvider>
   );
 }

@@ -39,6 +39,12 @@
           "icon": "./assets/icon.png",
           "color": "#3b82f6"
         }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "GameOn potrebuje dostop do fotografij za pošiljanje slik v chatu."
+        }
       ]
     ],
     "extra": {

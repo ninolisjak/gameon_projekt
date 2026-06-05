@@ -3,7 +3,7 @@ import {
   arrayUnion, arrayRemove, increment, onSnapshot, getDoc,
   runTransaction, query, where, getDocs, orderBy, limit,
 } from 'firebase/firestore';
-import { db, functions } from '../config/firebase';
+import { db, functions, auth } from '../config/firebase';
 import { httpsCallable } from 'firebase/functions';
 import { balanceTeams, userToBalanceInput, BalanceInput } from './teamBalancer';
 import { applyReputationChange, REP_DELTA } from './reputationService';
@@ -1266,6 +1266,18 @@ export const DEMO_USERS = ['ana', 'marc', 'luka', 'niko'] as const;
 
 // ── Stripe Checkout ───────────────────────────────────────────────────────────
 
+export async function createStripePaymentIntent(
+  amount: number,
+  entityType: 'match' | 'reservation',
+  entityId: string,
+  userId: string,
+  description: string,
+): Promise<string> {
+  const fn = httpsCallable<unknown, { clientSecret: string }>(functions, 'createPaymentIntent');
+  const result = await fn({ amount, entityType, entityId, userId, description });
+  return result.data.clientSecret;
+}
+
 export async function createStripeCheckoutSession(
   amount: number,
   entityType: 'match' | 'reservation',
@@ -1273,7 +1285,8 @@ export async function createStripeCheckoutSession(
   userId: string,
   description: string,
 ): Promise<string> {
+  const idToken = await auth.currentUser?.getIdToken(true) ?? null;
   const fn = httpsCallable<unknown, { url: string }>(functions, 'createCheckoutSession');
-  const result = await fn({ amount, entityType, entityId, userId, description });
+  const result = await fn({ amount, entityType, entityId, userId, description, idToken });
   return result.data.url;
 }

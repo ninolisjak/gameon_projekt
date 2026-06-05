@@ -10,7 +10,7 @@ import { auth } from '../config/firebase';
 import { fetchUserCostHistory, Match } from '../services/matchService';
 import { fetchMyReservations, Reservation } from '../services/reservationService';
 import { useColors } from '../context/PremiumContext';
-import PaymentCardModal from './PaymentCardModal';
+import PaymentWebViewModal from './PaymentWebViewModal';
 
 function formatDate(ts: any): string {
   if (!ts) return '—';
@@ -48,7 +48,6 @@ export default function UserCostHistoryScreen() {
         fetchUserCostHistory(userId),
         fetchMyReservations(userId),
       ]);
-
       const matchEntries: MatchEntry[] = matches.map(m => ({
         kind: 'match',
         data: m,
@@ -56,15 +55,12 @@ export default function UserCostHistoryScreen() {
         status: m.costSplit?.[userId] === 'paid' ? 'paid' : 'unpaid',
         date: m.datetime?.toDate ? m.datetime.toDate().getTime() : new Date(m.datetime).getTime(),
       }));
-
       const reservEntries: ReservEntry[] = reservations.map(r => ({
         kind: 'reservation',
         data: r,
         date: r.date?.toDate ? r.date.toDate().getTime() : new Date(r.date).getTime(),
       }));
-
-      const all: Entry[] = [...matchEntries, ...reservEntries].sort((a, b) => b.date - a.date);
-      setEntries(all);
+      setEntries([...matchEntries, ...reservEntries].sort((a, b) => b.date - a.date));
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -73,34 +69,26 @@ export default function UserCostHistoryScreen() {
 
   React.useEffect(() => { load(); }, []);
 
-  const unpaidMatches = entries.filter((e): e is MatchEntry  => e.kind === 'match'       && e.status === 'unpaid');
-  const paidMatches   = entries.filter((e): e is MatchEntry  => e.kind === 'match'       && e.status === 'paid');
+  const unpaidMatches = entries.filter((e): e is MatchEntry  => e.kind === 'match' && e.status === 'unpaid');
+  const paidMatches   = entries.filter((e): e is MatchEntry  => e.kind === 'match' && e.status === 'paid');
   const reservations  = entries.filter((e): e is ReservEntry => e.kind === 'reservation');
 
   const totalUnpaid = unpaidMatches.reduce((s, e) => s + e.perPerson, 0);
   const totalReserv = reservations.filter(e => !e.data.paid).reduce((s, e) => s + e.data.price, 0);
   const totalPaid   = paidMatches.reduce((s, e) => s + e.perPerson, 0);
 
-  function openPayment(p: PaymentParams) {
-    setPaymentParams(p);
-  }
-
   function renderMatchRow(e: MatchEntry) {
     const m = e.data;
     const sport = m.sport === 'basketball' ? 'Košarka' : 'Futsal';
     const isPaid = e.status === 'paid';
-
     return (
       <TouchableOpacity
         key={`m-${m.id}`}
         onPress={() => {
           if (!isPaid) {
-            openPayment({
-              amount: e.perPerson,
-              entityType: 'match',
-              entityId: m.id,
-              userId,
-              description: `${m.location?.name ?? 'Tekma'} – ${sport}`,
+            setPaymentParams({
+              amount: e.perPerson, entityType: 'match', entityId: m.id,
+              userId, description: `${m.location?.name ?? 'Tekma'} – ${sport}`,
             });
           } else {
             navigation.navigate('Home', { screen: 'CostSplit', params: { matchId: m.id } });
@@ -115,30 +103,16 @@ export default function UserCostHistoryScreen() {
           borderLeftColor: isPaid ? '#22c55e' : '#ef4444',
         }}
       >
-        <View style={{
-          width: 40, height: 40, borderRadius: 20,
-          backgroundColor: isPaid ? '#22c55e18' : '#ef444418',
-          alignItems: 'center', justifyContent: 'center',
-        }}>
-          <Ionicons
-            name={isPaid ? 'checkmark-circle' : 'card-outline'}
-            size={20} color={isPaid ? '#22c55e' : '#ef4444'}
-          />
+        <View style={{ width: 40, height: 40, borderRadius: 20, backgroundColor: isPaid ? '#22c55e18' : '#ef444418', alignItems: 'center', justifyContent: 'center' }}>
+          <Ionicons name={isPaid ? 'checkmark-circle' : 'card-outline'} size={20} color={isPaid ? '#22c55e' : '#ef4444'} />
         </View>
         <View style={{ flex: 1 }}>
-          <Text style={{ color: colors.text, fontSize: 14, fontWeight: '700' }} numberOfLines={1}>
-            {m.location?.name ?? 'Tekma'}
-          </Text>
-          <Text style={{ color: colors.textMuted, fontSize: 12, marginTop: 2 }}>
-            {sport} · {formatDate(m.datetime)}
-          </Text>
+          <Text style={{ color: colors.text, fontSize: 14, fontWeight: '700' }} numberOfLines={1}>{m.location?.name ?? 'Tekma'}</Text>
+          <Text style={{ color: colors.textMuted, fontSize: 12, marginTop: 2 }}>{sport} · {formatDate(m.datetime)}</Text>
         </View>
         <View style={{ alignItems: 'flex-end', gap: 4 }}>
           <Text style={{ color: colors.text, fontSize: 16, fontWeight: '900' }}>{fmt(e.perPerson)} €</Text>
-          <View style={{
-            paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6,
-            backgroundColor: isPaid ? '#22c55e20' : colors.primary + '22',
-          }}>
+          <View style={{ paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6, backgroundColor: isPaid ? '#22c55e20' : colors.primary + '22' }}>
             <Text style={{ color: isPaid ? '#22c55e' : colors.primary, fontSize: 10, fontWeight: '800' }}>
               {isPaid ? 'PLAČANO' : 'PLAČAJ'}
             </Text>
@@ -152,18 +126,14 @@ export default function UserCostHistoryScreen() {
   function renderReservRow(e: ReservEntry) {
     const r = e.data;
     const isPaid = r.paid === true;
-
     return (
       <TouchableOpacity
         key={`r-${r.id}`}
         onPress={() => {
           if (!isPaid) {
-            openPayment({
-              amount: r.price,
-              entityType: 'reservation',
-              entityId: r.id,
-              userId,
-              description: `Rezervacija igrišča · ${r.startHHMM}–${r.endHHMM}`,
+            setPaymentParams({
+              amount: r.price, entityType: 'reservation', entityId: r.id,
+              userId, description: `Rezervacija igrišča · ${r.startHHMM}–${r.endHHMM}`,
             });
           }
         }}
@@ -176,38 +146,23 @@ export default function UserCostHistoryScreen() {
           borderLeftColor: isPaid ? '#22c55e' : '#f59e0b',
         }}
       >
-        <View style={{
-          width: 40, height: 40, borderRadius: 20,
-          backgroundColor: isPaid ? '#22c55e18' : '#f59e0b18',
-          alignItems: 'center', justifyContent: 'center',
-        }}>
+        <View style={{ width: 40, height: 40, borderRadius: 20, backgroundColor: isPaid ? '#22c55e18' : '#f59e0b18', alignItems: 'center', justifyContent: 'center' }}>
           <Ionicons name={isPaid ? 'checkmark-circle' : 'card-outline'} size={20} color={isPaid ? '#22c55e' : '#f59e0b'} />
         </View>
         <View style={{ flex: 1 }}>
-          <Text style={{ color: colors.text, fontSize: 14, fontWeight: '700' }} numberOfLines={1}>
-            Rezervacija igrišča
-          </Text>
-          <Text style={{ color: colors.textMuted, fontSize: 12, marginTop: 2 }}>
-            {r.startHHMM} – {r.endHHMM} · {formatDate(r.date)}
-          </Text>
+          <Text style={{ color: colors.text, fontSize: 14, fontWeight: '700' }} numberOfLines={1}>Rezervacija igrišča</Text>
+          <Text style={{ color: colors.textMuted, fontSize: 12, marginTop: 2 }}>{r.startHHMM} – {r.endHHMM} · {formatDate(r.date)}</Text>
         </View>
         <View style={{ alignItems: 'flex-end', gap: 4 }}>
           <Text style={{ color: colors.text, fontSize: 16, fontWeight: '900' }}>{fmt(r.price)} €</Text>
-          <View style={{
-            paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6,
-            backgroundColor: isPaid ? '#22c55e20' : '#f59e0b20',
-          }}>
-            <Text style={{ color: isPaid ? '#22c55e' : '#f59e0b', fontSize: 10, fontWeight: '800' }}>
-              {isPaid ? 'PLAČANO' : 'PLAČAJ'}
-            </Text>
+          <View style={{ paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6, backgroundColor: isPaid ? '#22c55e20' : '#f59e0b20' }}>
+            <Text style={{ color: isPaid ? '#22c55e' : '#f59e0b', fontSize: 10, fontWeight: '800' }}>{isPaid ? 'PLAČANO' : 'PLAČAJ'}</Text>
           </View>
         </View>
         {!isPaid && <Ionicons name="card" size={16} color="#f59e0b" />}
       </TouchableOpacity>
     );
   }
-
-  const hasAny = entries.length > 0;
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.bg }}>
@@ -228,12 +183,8 @@ export default function UserCostHistoryScreen() {
             <Ionicons name="arrow-back" size={20} color="#fff" />
           </TouchableOpacity>
           <View style={{ flex: 1 }}>
-            <Text style={{ color: 'rgba(255,255,255,0.75)', fontSize: 11, fontWeight: '800', letterSpacing: 1.5, textTransform: 'uppercase' }}>
-              Moji stroški
-            </Text>
-            <Text style={{ color: '#fff', fontSize: 20, fontWeight: '900', marginTop: 2 }}>
-              Evidenca plačil
-            </Text>
+            <Text style={{ color: 'rgba(255,255,255,0.75)', fontSize: 11, fontWeight: '800', letterSpacing: 1.5, textTransform: 'uppercase' }}>Moji stroški</Text>
+            <Text style={{ color: '#fff', fontSize: 20, fontWeight: '900', marginTop: 2 }}>Evidenca plačil</Text>
           </View>
         </View>
 
@@ -257,7 +208,7 @@ export default function UserCostHistoryScreen() {
         <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
           <ActivityIndicator size="large" color={colors.primary} />
         </View>
-      ) : !hasAny ? (
+      ) : entries.length === 0 ? (
         <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', gap: 12 }}>
           <Ionicons name="receipt-outline" size={48} color={colors.textFaint} />
           <Text style={{ color: colors.textMuted, fontSize: 15, fontWeight: '600' }}>Ni evidenc stroškov.</Text>
@@ -276,7 +227,6 @@ export default function UserCostHistoryScreen() {
               {unpaidMatches.map(renderMatchRow)}
             </View>
           )}
-
           {reservations.length > 0 && (
             <View style={{ marginBottom: 8, marginTop: unpaidMatches.length > 0 ? 8 : 0 }}>
               <Text style={{ color: colors.textMuted, fontSize: 11, fontWeight: '800', letterSpacing: 1.2, textTransform: 'uppercase', marginBottom: 10 }}>
@@ -285,7 +235,6 @@ export default function UserCostHistoryScreen() {
               {reservations.map(renderReservRow)}
             </View>
           )}
-
           {paidMatches.length > 0 && (
             <View style={{ marginTop: 8 }}>
               <Text style={{ color: colors.textMuted, fontSize: 11, fontWeight: '800', letterSpacing: 1.2, textTransform: 'uppercase', marginBottom: 10 }}>
@@ -298,8 +247,8 @@ export default function UserCostHistoryScreen() {
       )}
 
       {paymentParams && (
-        <PaymentCardModal
-          visible={!!paymentParams}
+        <PaymentWebViewModal
+          visible
           amount={paymentParams.amount}
           entityType={paymentParams.entityType}
           entityId={paymentParams.entityId}
