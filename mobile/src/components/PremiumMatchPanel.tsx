@@ -4,11 +4,12 @@ import { Ionicons } from '@expo/vector-icons';
 import {
   Match, UserDoc, proposeGoal, confirmGoal, dismissPendingEvent,
   checkIn, swapTeam, finalizeMatch, requiredConfirmations,
-  fetchInvitablePlayers, invitePlayerToMatch, regenerateTeams,
+  fetchInvitablePlayers, sendMatchInvitation, regenerateTeams,
   resolveUserProfiles, suggestMissingPosition, PlayerPosition,
 } from '../services/matchService';
 import { useColors } from '../context/PremiumContext';
 import { makeStyles } from '../styles/PremiumMatchPanelStyles';
+import { auth } from '../config/firebase';
 
 type Props = {
   match: Match;
@@ -158,9 +159,8 @@ export default function PremiumMatchPanel({ match, userId, userNames }: Props) {
     if (!inviteTeam) return;
     setInvitingId(uid);
     try {
-      await invitePlayerToMatch(match.id, uid, inviteTeam);
-      setInviteTeam(null);
-      setInvitablePlayers([]);
+      const senderName = auth.currentUser?.displayName ?? 'Gostitelj';
+      await sendMatchInvitation(match.id, uid, inviteTeam, senderName, match.location?.name ?? 'Tekma');
     } catch (e: any) {
       Alert.alert('Napaka', e?.message ?? 'Povabilo ni uspelo.');
     } finally {
@@ -364,6 +364,7 @@ export default function PremiumMatchPanel({ match, userId, userNames }: Props) {
                 const name = u.displayName || (u.email ? u.email.split('@')[0] : u.uid.slice(0, 8));
                 const isInviting = invitingId === u.uid;
                 const matchesPos = targetPosition && u.position === targetPosition;
+                const invStatus = match.invitations?.[u.uid]?.status;
                 return (
                   <View key={u.uid} style={[
                     styles.invitePlayerRow,
@@ -385,16 +386,33 @@ export default function PremiumMatchPanel({ match, userId, userNames }: Props) {
                         ELO {u.elo} · Rep {u.reputation}{u.position ? ` · ${POSITION_LABEL[u.position]}` : ' · Brez pozicije'}
                       </Text>
                     </View>
-                    <TouchableOpacity
-                      style={[styles.inviteBtn, isInviting && { opacity: 0.5 }]}
-                      onPress={() => handleInvite(u.uid)}
-                      disabled={invitingId !== null}
-                      activeOpacity={0.85}
-                    >
-                      {isInviting
-                        ? <ActivityIndicator size="small" color="#fff" />
-                        : <Text style={styles.inviteBtnText}>POVABI</Text>}
-                    </TouchableOpacity>
+                    {invStatus === 'pending' ? (
+                      <View style={{ paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8, backgroundColor: '#f59e0b20', flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                        <Ionicons name="time-outline" size={12} color="#f59e0b" />
+                        <Text style={{ color: '#f59e0b', fontSize: 10, fontWeight: '800' }}>ČAKA</Text>
+                      </View>
+                    ) : invStatus === 'accepted' ? (
+                      <View style={{ paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8, backgroundColor: '#22c55e20', flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                        <Ionicons name="checkmark-circle" size={12} color="#22c55e" />
+                        <Text style={{ color: '#22c55e', fontSize: 10, fontWeight: '800' }}>SPREJEL</Text>
+                      </View>
+                    ) : invStatus === 'declined' ? (
+                      <View style={{ paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8, backgroundColor: '#ef444420', flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                        <Ionicons name="close-circle" size={12} color="#ef4444" />
+                        <Text style={{ color: '#ef4444', fontSize: 10, fontWeight: '800' }}>ZAVRNIL</Text>
+                      </View>
+                    ) : (
+                      <TouchableOpacity
+                        style={[styles.inviteBtn, isInviting && { opacity: 0.5 }]}
+                        onPress={() => handleInvite(u.uid)}
+                        disabled={invitingId !== null}
+                        activeOpacity={0.85}
+                      >
+                        {isInviting
+                          ? <ActivityIndicator size="small" color="#fff" />
+                          : <Text style={styles.inviteBtnText}>POVABI</Text>}
+                      </TouchableOpacity>
+                    )}
                   </View>
                 );
               })

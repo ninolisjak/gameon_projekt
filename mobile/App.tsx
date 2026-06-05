@@ -1,7 +1,7 @@
 import 'react-native-gesture-handler';
 import React from 'react';
 import { View, Text, ActivityIndicator } from 'react-native';
-import { NavigationContainer } from '@react-navigation/native';
+import { NavigationContainer, createNavigationContainerRef, CommonActions } from '@react-navigation/native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { createStackNavigator } from '@react-navigation/stack';
 import { createDrawerNavigator, DrawerContentScrollView, DrawerItemList } from '@react-navigation/drawer';
@@ -25,6 +25,17 @@ import { STRIPE_PUBLISHABLE_KEY } from './src/config/stripeConfig';
 import { PremiumProvider, useColors } from './src/context/PremiumContext';
 import { ensureUserDoc } from './src/services/matchService';
 import { registerForPushNotificationsAsync } from './src/services/notificationService';
+import * as Notifications from 'expo-notifications';
+
+const navigationRef = createNavigationContainerRef();
+
+Notifications.setNotificationHandler({
+  handleNotification: async () => ({
+    shouldShowAlert: true,
+    shouldPlaySound: true,
+    shouldSetBadge: false,
+  }),
+});
 
 const Stack = createStackNavigator();
 const Drawer = createDrawerNavigator();
@@ -134,6 +145,21 @@ export default function App() {
   const [user, setUser] = React.useState<any>(undefined);
 
   React.useEffect(() => {
+    const sub = Notifications.addNotificationResponseReceivedListener(response => {
+      const matchId = response.notification.request.content.data?.matchId;
+      if (matchId && navigationRef.isReady()) {
+        navigationRef.dispatch(
+          CommonActions.navigate({
+            name: 'Home',
+            params: { screen: 'MatchDetails', params: { matchId } },
+          })
+        );
+      }
+    });
+    return () => sub.remove();
+  }, []);
+
+  React.useEffect(() => {
     return onAuthStateChanged(auth, async u => {
       setUser(u);
       if (u) {
@@ -159,7 +185,7 @@ export default function App() {
     <StripeProvider publishableKey={STRIPE_PUBLISHABLE_KEY} merchantIdentifier="merchant.com.RISacc.gameontest">
       <PremiumProvider>
         <SafeAreaProvider>
-          <NavigationContainer>
+          <NavigationContainer ref={navigationRef}>
             {user ? <MainDrawer /> : <LoginScreen />}
           </NavigationContainer>
         </SafeAreaProvider>

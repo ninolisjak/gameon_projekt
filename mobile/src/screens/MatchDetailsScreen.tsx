@@ -4,7 +4,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { auth } from '../config/firebase';
-import { joinMatch, leaveMatch, leaveWaitlist, subscribeMatch, resolveUserNames, Match, DEMO_USERS, requestMatchStart, respondToMatchStart, cancelMatchLowAttendance } from '../services/matchService';
+import { joinMatch, leaveMatch, leaveWaitlist, subscribeMatch, resolveUserNames, Match, DEMO_USERS, requestMatchStart, respondToMatchStart, cancelMatchLowAttendance, respondToMatchInvitation } from '../services/matchService';
 import { showLocalNotification } from '../services/notificationService';
 import { makeStyles } from '../styles/MatchDetailsScreenStyles';
 import { useColors, usePremium } from '../context/PremiumContext';
@@ -19,6 +19,55 @@ function formatTime(ts: any): string {
   if (!ts) return '—';
   const d = ts.toDate ? ts.toDate() : new Date(ts);
   return d.toLocaleTimeString('sl-SI', { hour: '2-digit', minute: '2-digit' });
+}
+
+function InvitationBanner({ matchId, userId, team }: { matchId: string; userId: string; team: 'A' | 'B' }) {
+  const colors = useColors();
+  const [responding, setResponding] = React.useState(false);
+
+  async function respond(r: 'accepted' | 'declined') {
+    setResponding(true);
+    try {
+      await respondToMatchInvitation(matchId, userId, r);
+    } catch (e: any) {
+      Alert.alert('Napaka', e?.message ?? 'Napaka.');
+    } finally {
+      setResponding(false);
+    }
+  }
+
+  return (
+    <View style={{
+      marginHorizontal: 16, marginBottom: 12, borderRadius: 16, padding: 16,
+      backgroundColor: colors.primaryTint, borderWidth: 1, borderColor: colors.primary + '40',
+    }}>
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 12 }}>
+        <Ionicons name="mail-unread-outline" size={22} color={colors.primary} />
+        <View style={{ flex: 1 }}>
+          <Text style={{ color: colors.text, fontSize: 14, fontWeight: '800' }}>Povabljeni ste na tekmo</Text>
+          <Text style={{ color: colors.textMuted, fontSize: 12, marginTop: 2 }}>Ekipa {team} · Sprejmi ali zavrni povabilo</Text>
+        </View>
+      </View>
+      <View style={{ flexDirection: 'row', gap: 10 }}>
+        <TouchableOpacity
+          onPress={() => respond('accepted')}
+          disabled={responding}
+          style={{ flex: 1, backgroundColor: colors.primary, borderRadius: 12, paddingVertical: 12, alignItems: 'center' }}
+        >
+          {responding
+            ? <ActivityIndicator size="small" color="#fff" />
+            : <Text style={{ color: '#fff', fontSize: 13, fontWeight: '800' }}>✓ Sprejmi</Text>}
+        </TouchableOpacity>
+        <TouchableOpacity
+          onPress={() => respond('declined')}
+          disabled={responding}
+          style={{ flex: 1, backgroundColor: '#ef444415', borderRadius: 12, paddingVertical: 12, alignItems: 'center', borderWidth: 1, borderColor: '#ef444430' }}
+        >
+          <Text style={{ color: '#ef4444', fontSize: 13, fontWeight: '800' }}>✗ Zavrni</Text>
+        </TouchableOpacity>
+      </View>
+    </View>
+  );
 }
 
 export default function MatchDetailsScreen() {
@@ -391,6 +440,14 @@ export default function MatchDetailsScreen() {
             </View>
             <Ionicons name="chevron-forward" size={18} color={colors.textFaint} />
           </TouchableOpacity>
+
+          {match.invitations?.[userId]?.status === 'pending' && (
+            <InvitationBanner
+              matchId={match.id}
+              userId={userId}
+              team={match.invitations[userId].team}
+            />
+          )}
 
           {match.isPremium ? (
             <PremiumMatchPanel match={match} userId={userId} userNames={userNames} />

@@ -138,6 +138,8 @@ export type Match = {
   startConsent?: Record<string, 'yes' | 'no' | 'pending'>;
   matchStarted?: boolean;
   cancelReason?: string;
+
+  invitations?: Record<string, { status: 'pending' | 'accepted' | 'declined'; team: 'A' | 'B'; sentAt?: any }>;
 };
 
 export type UserDoc = {
@@ -954,6 +956,70 @@ export async function invitePlayerToMatch(
   });
 }
 
+
+export async function sendMatchInvitation(
+  matchId: string,
+  targetUserId: string,
+  team: 'A' | 'B',
+  senderName: string,
+  locationName: string,
+): Promise<void> {
+  const ref = doc(db, 'matches', matchId);
+  const snap = await getDoc(ref);
+  if (!snap.exists()) throw new Error('Tekma ne obstaja.');
+  const data = snap.data() as Match;
+  if (data.players?.includes(targetUserId)) throw new Error('Igralec je že prijavljen.');
+  const existing = data.invitations?.[targetUserId];
+  if (existing?.status === 'pending') throw new Error('Povabilo je že poslano.');
+
+  await updateDoc(ref, {
+    [`invitations.${targetUserId}`]: { status: 'pending', team, sentAt: Timestamp.now() },
+  });
+
+  const tokens = await getPlayerPushTokens([targetUserId]);
+  if (tokens.length > 0) {
+    await fetch('https://exp.host/--/api/v2/push/send', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        to: tokens[0],
+        title: '📨 Povabilo na tekmo',
+        body: `${senderName} te vabi v Ekipo ${team} — ${locationName}`,
+        data: { matchId },
+      }),
+    });
+  }
+}
+
+export async function respondToMatchInvitation(
+  matchId: string,
+  userId: string,
+  response: 'accepted' | 'declined',
+): Promise<void> {
+  const ref = doc(db, 'matches', matchId);
+  if (response === 'declined') {
+    await updateDoc(ref, { [`invitations.${userId}`]: { status: 'declined' } });
+    return;
+  }
+  await runTransaction(db, async tx => {
+    const snap = await tx.get(ref);
+    if (!snap.exists()) throw new Error('Tekma ne obstaja.');
+    const data = snap.data() as Match;
+    const inv = data.invitations?.[userId];
+    if (!inv || inv.status !== 'pending') throw new Error('Povabilo ni veljavno.');
+    const team = inv.team;
+    const teamField = team === 'A' ? 'teamA' : 'teamB';
+    const currentTeam = (data[teamField] ?? []) as string[];
+    const newFilled = data.filledSpots + 1;
+    tx.update(ref, {
+      players: arrayUnion(userId),
+      filledSpots: increment(1),
+      status: newFilled >= data.totalSpots ? 'full' : 'open',
+      [teamField]: [...currentTeam, userId],
+      [`invitations.${userId}`]: { status: 'accepted', team },
+    });
+  });
+}
 
 async function fetchBalanceInputs(uids: string[]): Promise<BalanceInput[]> {
   const inputs = await Promise.all(uids.map(async uid => {
