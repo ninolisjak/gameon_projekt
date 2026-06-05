@@ -15,7 +15,13 @@ import LoginScreen from './src/screens/LoginScreen';
 import ProfileScreen from './src/screens/ProfileScreen';
 import GroupsScreen from './src/screens/GroupsScreen';
 import BookVenueScreen from './src/screens/BookVenueScreen';
+import CostSplitScreen from './src/screens/CostSplitScreen';
+import MatchChatScreen from './src/screens/MatchChatScreen';
+import UserCostHistoryScreen from './src/screens/UserCostHistoryScreen';
+import PaymentCardScreen from './src/screens/PaymentCardScreen';
 import { makeDrawerStyles } from './src/styles/AppStyles';
+import { StripeProvider } from '@stripe/stripe-react-native';
+import { STRIPE_PUBLISHABLE_KEY } from './src/config/stripeConfig';
 import { PremiumProvider, useColors } from './src/context/PremiumContext';
 import { ensureUserDoc } from './src/services/matchService';
 import { registerForPushNotificationsAsync } from './src/services/notificationService';
@@ -37,13 +43,7 @@ function DrawerContent(props: any) {
           <Text style={drawerStyles.logoTextBottom}>ON</Text>
         </View>
       </View>
-      <DrawerItemList
-        {...props}
-        activeTintColor={colors.primary}
-        inactiveTintColor={colors.textMuted}
-        activeBackgroundColor={colors.bgSelected}
-        inactiveBackgroundColor="transparent"
-      />
+      <DrawerItemList {...props} />
     </DrawerContentScrollView>
   );
 }
@@ -56,6 +56,9 @@ function MainStack() {
       <Stack.Screen name="MatchDetails" component={MatchDetailsScreen} />
       <Stack.Screen name="Groups" component={GroupsScreen} />
       <Stack.Screen name="BookVenue" component={BookVenueScreen} />
+      <Stack.Screen name="CostSplit" component={CostSplitScreen} />
+      <Stack.Screen name="PaymentCard" component={PaymentCardScreen} />
+      <Stack.Screen name="MatchChat" component={MatchChatScreen} />
     </Stack.Navigator>
   );
 }
@@ -63,7 +66,18 @@ function MainStack() {
 function MainDrawer() {
   const colors = useColors();
   return (
-    <Drawer.Navigator drawerContent={(props) => <DrawerContent {...props} />} screenOptions={{ headerShown: false, drawerStyle: { backgroundColor: colors.bg, width: 260 } }}>
+    <Drawer.Navigator
+      drawerContent={(props) => <DrawerContent {...props} />}
+      screenOptions={{
+        headerShown: false,
+        drawerStyle: { backgroundColor: colors.bg, width: 260 },
+        drawerActiveTintColor: colors.primary,
+        drawerInactiveTintColor: '#c8d3e8',
+        drawerActiveBackgroundColor: colors.bgSelected,
+        drawerInactiveBackgroundColor: 'transparent',
+        drawerLabelStyle: { fontWeight: '600', fontSize: 14 },
+      }}
+    >
       <Drawer.Screen
         name="Home"
         component={MainStack}
@@ -94,6 +108,14 @@ function MainDrawer() {
         options={{
           title: 'Rezerviraj igrišče',
           drawerIcon: ({ color }) => <Ionicons name="calendar-outline" size={20} color={color} />,
+        }}
+      />
+      <Drawer.Screen
+        name="CostHistory"
+        component={UserCostHistoryScreen}
+        options={{
+          title: 'Evidenca stroškov',
+          drawerIcon: ({ color }) => <Ionicons name="receipt-outline" size={20} color={color} />,
         }}
       />
       <Drawer.Screen
@@ -134,12 +156,14 @@ export default function App() {
   }
 
   return (
-    <PremiumProvider>
-      <SafeAreaProvider>
-        <NavigationContainer>
-          {user ? <MainDrawer /> : <LoginScreen />}
-        </NavigationContainer>
-      </SafeAreaProvider>
-    </PremiumProvider>
+    <StripeProvider publishableKey={STRIPE_PUBLISHABLE_KEY} merchantIdentifier="merchant.com.RISacc.gameontest">
+      <PremiumProvider>
+        <SafeAreaProvider>
+          <NavigationContainer>
+            {user ? <MainDrawer /> : <LoginScreen />}
+          </NavigationContainer>
+        </SafeAreaProvider>
+      </PremiumProvider>
+    </StripeProvider>
   );
 }

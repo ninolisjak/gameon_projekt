@@ -60,10 +60,7 @@ export default function MatchDetailsScreen() {
     resolveUserNames(uids).then(setUserNames);
   }, [match?.players?.join(','), match?.waitlist?.join(',')]);
 
-  // Auto-cancel: dep is only match?.id so the timer is set ONCE per match and never reset by
-  // Firestore snapshots (Timestamp is always a new object reference → Object.is = false → would
-  // clear + reset the timer on every snapshot if we used match?.datetime as dep).
-  // Datetime is read from matchRef so we always get the real value even on first load.
+  
   React.useEffect(() => {
     if (!match?.id) return;
 
@@ -228,6 +225,15 @@ export default function MatchDetailsScreen() {
             <TouchableOpacity style={styles.backBtn} onPress={() => navigation.goBack()}>
               <Ionicons name="arrow-back" size={20} color="#fff" />
             </TouchableOpacity>
+            <TouchableOpacity
+              onPress={() => navigation.navigate('MatchChat', {
+                matchId: match.id,
+                matchName: match.location?.name ?? 'Tekma',
+              })}
+              style={{ width: 38, height: 38, borderRadius: 19, backgroundColor: 'rgba(255,255,255,0.18)', alignItems: 'center', justifyContent: 'center' }}
+            >
+              <Ionicons name="chatbubble-ellipses-outline" size={20} color="#fff" />
+            </TouchableOpacity>
             <View style={styles.statusPill}>
               <View style={[styles.statusDot, { backgroundColor: isFull ? '#ef4444' : '#22c55e' }]} />
               <Text style={styles.statusText}>{isFull ? 'POLNO' : 'ODPRTO'}</Text>
@@ -361,6 +367,30 @@ export default function MatchDetailsScreen() {
               )}
             </View>
           )}
+
+          {/* Rental cost card */}
+          <TouchableOpacity
+            style={[styles.playersCard, { flexDirection: 'row', alignItems: 'center', gap: 12 }]}
+            onPress={() => navigation.navigate('CostSplit', { matchId: match.id })}
+            activeOpacity={0.85}
+          >
+            <View style={[styles.infoIconBox, { width: 38, height: 38, borderRadius: 12 }]}>
+              <Ionicons name="receipt-outline" size={18} color={colors.primaryLight} />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.playersTitle}>Delitev stroška najema</Text>
+              {match.rentalCost ? (
+                <Text style={styles.infoSub}>
+                  {(match.rentalCost / (match.players?.length || 1)).toFixed(2).replace('.', ',')} € / osebo
+                  {' · '}
+                  {Object.values(match.costSplit ?? {}).filter(s => s === 'paid').length}/{match.players?.length ?? 0} plačalo
+                </Text>
+              ) : (
+                <Text style={styles.infoSub}>Strošek še ni nastavljen</Text>
+              )}
+            </View>
+            <Ionicons name="chevron-forward" size={18} color={colors.textFaint} />
+          </TouchableOpacity>
 
           {match.isPremium ? (
             <PremiumMatchPanel match={match} userId={userId} userNames={userNames} />
