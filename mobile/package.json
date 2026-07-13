@@ -37,8 +37,12 @@
     "react-native-webview": "13.8.6"
   },
   "devDependencies": {
+    "@testing-library/react-native": "^14.0.1",
+    "@types/jest": "^30.0.0",
     "@types/node": "^25.9.1",
     "@types/react": "~18.2.45",
+    "jest": "^30.4.2",
+    "jest-expo": "^57.0.1",
     "typescript": "~5.3.3"
   },
   "private": true
