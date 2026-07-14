@@ -1,0 +1,52 @@
+name: GameOn CI
+
+on:
+  push:
+    branches: [ main, master, develop ]
+  pull_request:
+    branches: [ main, master, develop ]
+
+jobs:
+  # mobiaapptest 
+  test-mobile:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 18
+          cache: 'npm'
+          cache-dependency-path: mobile/package-lock.json
+
+      - name: Install Mobile Dependencies
+        working-directory: ./mobile
+        run: npm ci --legacy-peer-deps
+
+      - name: Run Mobile Tests
+        working-directory: ./mobile
+        run: npm test
+
+  # za testiranje webappa
+  test-web:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 18
+          cache: 'npm'
+          cache-dependency-path: web/package-lock.json # to je za ko/ce ima web package-lock
+
+      - name: Install Web Dependencies
+        working-directory: ./web
+        run: npm ci --legacy-peer-deps # tu se prilagodi, če spletni del uporablja yarn/pnpm
+
+      - name: Run Web Tests
+        working-directory: ./web
+        run: npm test # z tem se preveri, če imaš v web/package.json pod "scripts" definiran "test"

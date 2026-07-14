@@ -3,7 +3,7 @@ import { render, fireEvent } from '@testing-library/react-native';
 import PremiumMatchPanel from '../PremiumMatchPanel';
 import * as matchService from '../../services/matchService';
 
-jest.mock('../context/PremiumContext', () => ({
+jest.mock('../../context/PremiumContext', () => ({
   useColors: jest.fn(() => ({
     primary: '#000',
     primaryLight: '#111',
@@ -15,7 +15,7 @@ jest.mock('../context/PremiumContext', () => ({
   })),
 }));
 
-jest.mock('../services/matchService', () => ({
+jest.mock('../../services/matchService', () => ({
   proposeGoal: jest.fn(),
   resolveUserProfiles: jest.fn(() => Promise.resolve(new Map())),
   requiredConfirmations: jest.fn(() => 2),
