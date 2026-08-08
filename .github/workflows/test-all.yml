@@ -1,52 +1,108 @@
-name: GameOn CI
+name: GameOn CI/CD
 
 on:
   push:
-    branches: [ main, master, develop ]
+    branches: [main, master, yard-owner]
   pull_request:
-    branches: [ main, master, develop ]
+    branches: [main, master, yard-owner]
 
 jobs:
-  # mobiaapptest 
+  # ── Mobile testi ──────────────────────────────────────────────────────────
   test-mobile:
+    name: Mobile testi
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout repository
+      - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Node.js
+      - name: Node.js 18
         uses: actions/setup-node@v4
         with:
           node-version: 18
           cache: 'npm'
           cache-dependency-path: mobile/package-lock.json
 
-      - name: Install Mobile Dependencies
+      - name: Instaliraj odvisnosti
         working-directory: ./mobile
         run: npm ci --legacy-peer-deps
 
-      - name: Run Mobile Tests
+      - name: Zaženi teste
         working-directory: ./mobile
-        run: npm test
+        run: npm test -- --coverage --ci --forceExit
 
-  # za testiranje webappa
+      - name: Naloži coverage
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: mobile-coverage
+          path: mobile/coverage/
+
+  # ── Web testi ─────────────────────────────────────────────────────────────
   test-web:
+    name: Web testi
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout repository
+      - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Node.js
+      - name: Node.js 18
         uses: actions/setup-node@v4
         with:
           node-version: 18
           cache: 'npm'
-          cache-dependency-path: web/package-lock.json # to je za ko/ce ima web package-lock
+          cache-dependency-path: web/package-lock.json
 
-      - name: Install Web Dependencies
+      - name: Instaliraj odvisnosti
         working-directory: ./web
-        run: npm ci --legacy-peer-deps # tu se prilagodi, če spletni del uporablja yarn/pnpm
+        run: npm ci --legacy-peer-deps
 
-      - name: Run Web Tests
+      - name: Zaženi teste
         working-directory: ./web
-        run: npm test # z tem se preveri, če imaš v web/package.json pod "scripts" definiran "test"
+        run: npm test -- --coverage --ci --forceExit
+
+      - name: Naloži coverage
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: web-coverage
+          path: web/coverage/
+
+  # ── Deploy spletne konzole (samo main/master) ──────────────────────────────
+  deploy-web:
+    name: Deploy → Netlify
+    runs-on: ubuntu-latest
+    needs: [test-mobile, test-web]
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Node.js 18
+        uses: actions/setup-node@v4
+        with:
+          node-version: 18
+          cache: 'npm'
+          cache-dependency-path: web/package-lock.json
+
+      - name: Instaliraj odvisnosti
+        working-directory: ./web
+        run: npm ci --legacy-peer-deps
+
+      - name: Build
+        working-directory: ./web
+        run: npm run build
+        env:
+          VITE_FIREBASE_API_KEY: ${{ secrets.FIREBASE_API_KEY }}
+          VITE_FIREBASE_AUTH_DOMAIN: ${{ secrets.FIREBASE_AUTH_DOMAIN }}
+          VITE_FIREBASE_PROJECT_ID: ${{ secrets.FIREBASE_PROJECT_ID }}
+          VITE_FIREBASE_STORAGE_BUCKET: ${{ secrets.FIREBASE_STORAGE_BUCKET }}
+          VITE_FIREBASE_MESSAGING_SENDER_ID: ${{ secrets.FIREBASE_MESSAGING_SENDER_ID }}
+          VITE_FIREBASE_APP_ID: ${{ secrets.FIREBASE_APP_ID }}
+
+      - name: Deploy na Netlify
+        uses: netlify/actions/cli@master
+        with:
+          args: deploy --dir=web/dist --prod
+        env:
+          NETLIFY_SITE_ID: ${{ secrets.NETLIFY_SITE_ID }}
+          NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}

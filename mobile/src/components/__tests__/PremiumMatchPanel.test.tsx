@@ -1,7 +1,9 @@
 import React from 'react';
-import { render, fireEvent } from '@testing-library/react-native';
+import { render, fireEvent, act } from '@testing-library/react-native';
 import PremiumMatchPanel from '../PremiumMatchPanel';
 import * as matchService from '../../services/matchService';
+
+jest.useFakeTimers();
 
 jest.mock('../../context/PremiumContext', () => ({
   useColors: jest.fn(() => ({
@@ -16,7 +18,7 @@ jest.mock('../../context/PremiumContext', () => ({
 }));
 
 jest.mock('../../services/matchService', () => ({
-  proposeGoal: jest.fn(),
+  proposeGoal: jest.fn(() => Promise.resolve()),
   resolveUserProfiles: jest.fn(() => Promise.resolve(new Map())),
   requiredConfirmations: jest.fn(() => 2),
 }));
@@ -55,11 +57,15 @@ describe('PremiumMatchPanel', () => {
     expect(getAllByText('0')).toBeTruthy();
   });
 
-  it('sprozi klic storitve ob prijavi gola', () => {
+  it('sprozi klic storitve ob prijavi gola', async () => {
     const { getByText } = render(
       <PremiumMatchPanel match={mockMatch} userId="user1" />
     );
-    fireEvent.press(getByText('Zadel sem gol (Ekipa A)'));
+    
+    await act(async () => {
+      fireEvent.press(getByText('Zadel sem gol (Ekipa A)'));
+    });
+    
     expect(matchService.proposeGoal).toHaveBeenCalledWith('test-match', 'user1', 'user1');
   });
 });
