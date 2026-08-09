@@ -7,7 +7,7 @@ on:
     branches: [main, master, yard-owner]
 
 jobs:
-  # ── Mobile testi ──────────────────────────────────────────────────────────
+  #Mmobilni testi
   test-mobile:
     name: Mobile testi
     runs-on: ubuntu-latest
@@ -37,7 +37,7 @@ jobs:
           name: mobile-coverage
           path: mobile/coverage/
 
-  # ── Web testi ─────────────────────────────────────────────────────────────
+  # testi web konzoe 
   test-web:
     name: Web testi
     runs-on: ubuntu-latest
@@ -67,7 +67,7 @@ jobs:
           name: web-coverage
           path: web/coverage/
 
-  # ── Deploy spletne konzole (samo main/master) ──────────────────────────────
+  # deployanje web konzole samo v mainu/masterju
   deploy-web:
     name: Deploy → Netlify
     runs-on: ubuntu-latest
