@@ -1,3 +1,36 @@
+jest.mock('../../config/firebase', () => ({
+  db: {},
+  auth: { currentUser: null },
+  functions: {},
+}));
+
+jest.mock('firebase/firestore', () => ({
+  collection: jest.fn(),
+  doc: jest.fn(),
+  getDoc: jest.fn(),
+  getDocs: jest.fn(),
+  addDoc: jest.fn(),
+  updateDoc: jest.fn(),
+  setDoc: jest.fn(),
+  runTransaction: jest.fn(),
+  onSnapshot: jest.fn(),
+  query: jest.fn(),
+  where: jest.fn(),
+  orderBy: jest.fn(),
+  limit: jest.fn(),
+  arrayUnion: jest.fn(),
+  arrayRemove: jest.fn(),
+  increment: jest.fn(),
+  Timestamp: {
+    now: jest.fn(() => ({ toDate: () => new Date() })),
+    fromDate: jest.fn((d: Date) => ({ toDate: () => d })),
+  },
+}));
+
+jest.mock('firebase/functions', () => ({
+  httpsCallable: jest.fn(() => jest.fn()),
+}));
+
 import { weatherDescription } from '../weatherService';
 import { playerStrength, userToBalanceInput, computeBalanceScore, balanceTeams, BalanceInput } from '../teamBalancer';
 import { requiredConfirmations, STARTING_ELO, UserDoc } from '../matchService';
