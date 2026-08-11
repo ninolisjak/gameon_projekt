@@ -131,11 +131,8 @@ jobs:
           cache: 'npm'
           cache-dependency-path: mobile/package-lock.json
 
-      - name: Nastavi EAS
-        uses: expo/expo-github-action@v8
-        with:
-          eas-version: latest
-          token: ${{ secrets.EXPO_TOKEN }}
+      - name: Instaliraj EAS CLI
+        run: npm install -g eas-cli
 
       - name: Instaliraj odvisnosti
         working-directory: ./mobile
@@ -144,3 +141,5 @@ jobs:
       - name: Postavi build v vrsto
         working-directory: ./mobile
         run: eas build --platform android --profile preview --non-interactive --no-wait
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
