@@ -8,7 +8,7 @@ function sortByDate(reservations: Reservation[]): Reservation[] {
   return reservations.sort((a, b) => {
     const ta = a.date?.toDate?.()?.getTime() ?? 0;
     const tb = b.date?.toDate?.()?.getTime() ?? 0;
-    return tb - ta;
+    return tb - ta ;
   });
 }
 
