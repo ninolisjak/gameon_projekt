@@ -12,14 +12,13 @@
 4. [Podatkovni modeli — ER diagram](#podatkovni-modeli--er-diagram)
 5. [Razredni diagram](#razredni-diagram)
 6. [Diagram primerov uporabe](#diagram-primerov-uporabe)
-7. [Diagram toka podatkov (DFD)](#diagram-toka-podatkov-dfd)
-8. [Sekvenčni diagrami](#sekvenčni-diagrami)
-9. [Navigacijska struktura](#navigacijska-struktura)
-10. [Ključne funkcionalnosti](#ključne-funkcionalnosti)
-11. [Navodila za zagon](#navodila-za-zagon)
-12. [Vodenje projekta](#vodenje-projekta)
-13. [Zagotavljanje kakovosti](#zagotavljanje-kakovosti)
-14. [Varnostna pravila](#varnostna-pravila)
+7. [Sekvenčni diagrami](#sekvenčni-diagrami)
+8. [Navigacijska struktura](#navigacijska-struktura)
+9. [Ključne funkcionalnosti](#ključne-funkcionalnosti)
+10. [Navodila za zagon](#navodila-za-zagon)
+11. [Vodenje projekta](#vodenje-projekta)
+12. [Zagotavljanje kakovosti](#zagotavljanje-kakovosti)
+13. [Varnostna pravila](#varnostna-pravila)
 
 ---
 
@@ -444,129 +443,6 @@ classDiagram
 
 - *Oddaj končni rezultat* **vključuje** (`<<Include>>`) *Zaključi tekmo in razdeli ELO / reputacijo*: ko se rezultata obeh kapetanov ujemata, se tekma samodejno zapre in ELO ter reputacija se razdelita vsem prisotnim igralcem.
 - *Vnos rezultata ob neujemanju kapetanov* **razširja** (`<<Extend>>`) oddajo rezultata: sproži se samo, če se kapetana ne strinjata, in je takrat na voljo vsem prijavljenim igralcem — velja rezultat večine.
-
----
-
-## Diagram toka podatkov (DFD)
-
-### Nivo 0 — Kontekstni diagram
-
-```mermaid
-graph LR
-    PLAYER([Igralec])
-    OWNER([Lastnik objekta])
-    STRIPE_EXT([Stripe])
-    MAPS_EXT([Google Maps])
-
-    SYSTEM[GameOn\nSistem]
-
-    PLAYER -->|registracija, iskanje tekem,\npridružitev, chat, rezervacija| SYSTEM
-    SYSTEM -->|tekme, obvestila,\npotrditve| PLAYER
-
-    OWNER -->|upravljanje objektov,\nrazporedi, cene| SYSTEM
-    SYSTEM -->|rezervacije, prihodki,\nstatistike| OWNER
-
-    SYSTEM -->|zahteva za plačilo| STRIPE_EXT
-    STRIPE_EXT -->|potrditev plačila| SYSTEM
-
-    MAPS_EXT -->|koordinate, geokodiranje| SYSTEM
-```
-
-### Nivo 1 — Glavni procesi
-
-```mermaid
-graph TB
-    subgraph "Vhodni podatki"
-        PLAYER([Igralec])
-        OWNER([Lastnik])
-    end
-
-    subgraph "Procesi"
-        P1[1. Upravljanje\nidentitete]
-        P2[2. Upravljanje\ntekem]
-        P3[3. Iskanje\nin filtriranje]
-        P4[4. Komunikacija\nin chat]
-        P5[5. Rezervacije\nin plačila]
-        P6[6. Računanje\nELO in reputacije]
-        P7[7. Upravljanje\nobjekatov]
-    end
-
-    subgraph "Podatkovne shrambe"
-        DS1[(users)]
-        DS2[(matches)]
-        DS3[(venues)]
-        DS4[(reservations)]
-        DS5[(messages)]
-    end
-
-    PLAYER --> P1
-    OWNER --> P1
-    P1 <--> DS1
-
-    PLAYER --> P2
-    P2 <--> DS2
-    P2 --> P6
-    P6 --> DS1
-
-    PLAYER --> P3
-    P3 --> DS2
-    P3 --> DS3
-
-    PLAYER --> P4
-    P4 <--> DS5
-
-    PLAYER --> P5
-    P5 <--> DS4
-    P5 --> DS2
-
-    OWNER --> P7
-    P7 <--> DS3
-    P7 --> DS4
-```
-
-### Tok podatkov — Ustvarjanje tekme
-
-```mermaid
-flowchart TD
-    A[Igralec vnese podatke tekme] --> B{Javna ali zasebna?}
-    B -->|Javna| C[Zapis v Firestore\nbrez invite kode]
-    B -->|Zasebna| D[Generiranje invite kode\nZapis v Firestore]
-    C --> E{Rezervacija dvorane?}
-    D --> E
-    E -->|Da| F[Iskanje razpoložljivih\nslotov za venue]
-    F --> G[Stripe Checkout Session\nprek Cloud Functions]
-    G --> H{Plačilo uspešno?}
-    H -->|Da| I[Rezervacija shranjena\nv Firestore]
-    H -->|Ne| J[Napaka - brez rezervacije]
-    E -->|Ne| K[Tekma aktivna\nbrez dvorane]
-    I --> K
-    K --> L[Push obvestila\nobližnjim igralcem]
-    L --> M[Tekma vidna\nna karti]
-```
-
-### Tok podatkov — Plačilo rezervacije
-
-```mermaid
-sequenceDiagram
-    participant U as Igralec (mobilno)
-    participant CF as Cloud Functions
-    participant S as Stripe API
-    participant FS as Firestore
-
-    U->>CF: createCheckoutSession(venueId, slotId, matchId)
-    CF->>S: stripe.checkout.sessions.create(...)
-    S-->>CF: { url, sessionId }
-    CF-->>U: checkout URL
-    U->>S: Odpre Stripe checkout v brskalniku
-    S->>U: Vnos podatkov kartice
-    U->>S: Potrdi plačilo
-    S-->>U: Preusmeri na success.html
-    U->>CF: createReservation(sessionId, ...)
-    CF->>S: Preveri status seje
-    S-->>CF: { status: "complete" }
-    CF->>FS: Zapiše rezervacijo (status: confirmed)
-    CF-->>U: Potrditev
-```
 
 ---
 
