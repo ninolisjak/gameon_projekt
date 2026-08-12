@@ -4,7 +4,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { auth } from '../config/firebase';
-import { joinMatch, leaveMatch, leaveWaitlist, subscribeMatch, resolveUserNames, Match, DEMO_USERS, requestMatchStart, respondToMatchStart, cancelMatchLowAttendance } from '../services/matchService';
+import { joinMatch, leaveMatch, leaveWaitlist, subscribeMatch, resolveUserNames, Match, DEMO_USERS, requestMatchStart, respondToMatchStart, cancelMatchLowAttendance, acceptInvite, declineInvite } from '../services/matchService';
 import { showLocalNotification } from '../services/notificationService';
 import { makeStyles } from '../styles/MatchDetailsScreenStyles';
 import { useColors, usePremium } from '../context/PremiumContext';
@@ -39,6 +39,7 @@ export default function MatchDetailsScreen() {
   const prevStartRequestedRef = React.useRef<boolean | null>(null);
   const prevMatchStartedRef = React.useRef<boolean | null>(null);
   const prevCancelledRef = React.useRef<boolean | null>(null);
+  const prevInviteRef = React.useRef<boolean | null>(null);
   const matchRef = React.useRef<Match | null>(null);
   React.useEffect(() => { matchRef.current = match; }, [match]);
 
@@ -99,7 +100,7 @@ export default function MatchDetailsScreen() {
     const cur = !!match.matchStarted;
     const prev = prevMatchStartedRef.current;
     if (prev !== null && !prev && cur) {
-      showLocalNotification('Tekma se začinja!', 'Vsi so potrdili začetek. Dober tek!').catch(() => {});
+      showLocalNotification('Tekma se začinja!', 'Vsi so potrdili začetek.').catch(() => {});
     }
     prevMatchStartedRef.current = cur;
   }, [match?.matchStarted]);
@@ -114,6 +115,17 @@ export default function MatchDetailsScreen() {
     }
     prevCancelledRef.current = cur;
   }, [match?.status, match?.cancelReason, userId]);
+
+  React.useEffect(() => {
+    if (!match) return;
+    const cur = !!match.pendingInvites?.[userId];
+    const prev = prevInviteRef.current;
+    if (prev !== null && !prev && cur) {
+      const sport = match.sport === 'basketball' ? 'košarko' : 'futsal';
+      showLocalNotification('Povabilo na tekmo', `Povabljeni ste k igranju ${sport}! Odpri tekmo za sprejem.`).catch(() => {});
+    }
+    prevInviteRef.current = cur;
+  }, [match?.pendingInvites, userId]);
 
   async function handleStartMatch() {
     if (!match) return;
@@ -191,6 +203,26 @@ export default function MatchDetailsScreen() {
     ]);
   }
 
+  async function handleAcceptInvite() {
+    if (!match) return;
+    setBusy(true);
+    try {
+      await acceptInvite(match.id, userId);
+    } catch (e: any) {
+      Alert.alert('Napaka', e.message ?? 'Sprejem ni uspel.');
+    } finally { setBusy(false); }
+  }
+
+  async function handleDeclineInvite() {
+    if (!match) return;
+    setBusy(true);
+    try {
+      await declineInvite(match.id, userId);
+    } catch (e: any) {
+      Alert.alert('Napaka', e.message ?? 'Zavrnitev ni uspela.');
+    } finally { setBusy(false); }
+  }
+
   async function handleLeaveWaitlist() {
     if (!match || matchId === 'test') return;
     setBusy(true);
@@ -211,6 +243,7 @@ export default function MatchDetailsScreen() {
 
   const emptySlots = Math.max(0, match.totalSpots - (match.players?.length ?? match.filledSpots));
   const waitlistCount = waitlist.length;
+  const pendingInvite = match.pendingInvites?.[userId] ?? null;
 
   return (
     <View style={styles.container}>
@@ -222,15 +255,17 @@ export default function MatchDetailsScreen() {
             <TouchableOpacity style={styles.backBtn} onPress={() => navigation.goBack()}>
               <Ionicons name="arrow-back" size={20} color="#fff" />
             </TouchableOpacity>
-            <TouchableOpacity
-              onPress={() => navigation.navigate('MatchChat', {
-                matchId: match.id,
-                matchName: match.location?.name ?? 'Tekma',
-              })}
-              style={{ width: 38, height: 38, borderRadius: 19, backgroundColor: 'rgba(255,255,255,0.18)', alignItems: 'center', justifyContent: 'center' }}
-            >
-              <Ionicons name="chatbubble-ellipses-outline" size={20} color="#fff" />
-            </TouchableOpacity>
+            {isJoined ? (
+              <TouchableOpacity
+                onPress={() => navigation.navigate('MatchChat', {
+                  matchId: match.id,
+                  matchName: match.location?.name ?? 'Tekma',
+                })}
+                style={{ width: 38, height: 38, borderRadius: 19, backgroundColor: 'rgba(255,255,255,0.18)', alignItems: 'center', justifyContent: 'center' }}
+              >
+                <Ionicons name="chatbubble-ellipses-outline" size={20} color="#fff" />
+              </TouchableOpacity>
+            ) : <View style={{ width: 38 }} />}
             <View style={styles.statusPill}>
               <View style={[styles.statusDot, { backgroundColor: isFull ? '#ef4444' : '#22c55e' }]} />
               <Text style={styles.statusText}>{isFull ? 'POLNO' : 'ODPRTO'}</Text>
@@ -365,6 +400,49 @@ export default function MatchDetailsScreen() {
             </View>
           )}
 
+          {pendingInvite && (
+            <View style={{
+              backgroundColor: '#f59e0b12', borderRadius: 16, padding: 16, marginBottom: 12,
+              borderWidth: 1, borderColor: '#f59e0b40',
+            }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 12 }}>
+                <View style={{ width: 36, height: 36, borderRadius: 18, backgroundColor: '#f59e0b20', alignItems: 'center', justifyContent: 'center' }}>
+                  <Ionicons name="mail-outline" size={18} color="#f59e0b" />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={{ color: colors.text, fontSize: 14, fontWeight: '800' }}>Povabilo na tekmo</Text>
+                  <Text style={{ color: colors.textMuted, fontSize: 12, marginTop: 2 }}>
+                    Povabljeni ste v Ekipo {pendingInvite.team} — sprejmite ali zavrnite.
+                  </Text>
+                </View>
+              </View>
+              <View style={{ flexDirection: 'row', gap: 10 }}>
+                <TouchableOpacity
+                  onPress={handleAcceptInvite}
+                  disabled={busy}
+                  activeOpacity={0.85}
+                  style={{ flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, backgroundColor: '#22c55e', borderRadius: 12, paddingVertical: 12 }}
+                >
+                  {busy ? <ActivityIndicator color="#fff" size="small" /> : (
+                    <>
+                      <Ionicons name="checkmark" size={16} color="#fff" />
+                      <Text style={{ color: '#fff', fontSize: 13, fontWeight: '800' }}>SPREJMI</Text>
+                    </>
+                  )}
+                </TouchableOpacity>
+                <TouchableOpacity
+                  onPress={handleDeclineInvite}
+                  disabled={busy}
+                  activeOpacity={0.85}
+                  style={{ flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, backgroundColor: colors.bgElevated, borderRadius: 12, paddingVertical: 12, borderWidth: 1, borderColor: '#ef444440' }}
+                >
+                  <Ionicons name="close" size={16} color="#ef4444" />
+                  <Text style={{ color: '#ef4444', fontSize: 13, fontWeight: '800' }}>ZAVRNI</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          )}
+
           <TouchableOpacity
             style={[styles.playersCard, { flexDirection: 'row', alignItems: 'center', gap: 12 }]}
             onPress={() => navigation.navigate('CostSplit', { matchId: match.id })}
@@ -494,6 +572,11 @@ export default function MatchDetailsScreen() {
               )}
             </TouchableOpacity>
           )
+        ) : pendingInvite ? (
+          <View style={[styles.fullBtn, { flexDirection: 'row', gap: 8, borderColor: '#f59e0b40', backgroundColor: '#f59e0b10' }]}>
+            <Ionicons name="mail-outline" size={18} color="#f59e0b" />
+            <Text style={[styles.fullBtnText, { color: '#f59e0b' }]}>Povabilo čaka — odgovori zgoraj ↑</Text>
+          </View>
         ) : isJoined ? (
           <TouchableOpacity style={styles.leaveBtn} onPress={handleLeave} disabled={busy}>
             {busy ? <ActivityIndicator color={colors.danger} /> : (

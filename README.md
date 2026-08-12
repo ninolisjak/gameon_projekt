@@ -415,43 +415,35 @@ classDiagram
 
 ## Diagram primerov uporabe
 
-```mermaid
-C4Context
-    title Diagram primerov uporabe — GameOn
+![Diagram primerov uporabe — GameOn](docs/diagrami/projekt.jpg)
 
-    Person(player, "Player", "Igralec — mobilna aplikacija")
-    Person(captain, "Group Captain", "Kapetan ekipe")
-    Person(owner, "Venue Owner", "Lastnik objekta — spletna konzola")
+> Diagram je izdelan v **Visual Paradigm** (standardna UML notacija).
+> Izvorni projekt za urejanje: [`docs/diagrami/projekt.vpp`](docs/diagrami/projekt.vpp) —
+> po spremembi diagram znova izvozi kot sliko (*File → Export → Active Diagram as Image*).
 
-    System_Boundary(mobile, "Mobilna aplikacija") {
-        System(uc1, "Pregled tekem na zemljevidu")
-        System(uc2, "Ustvari tekmo (javna / zasebna)")
-        System(uc3, "Prijava in odjava s tekme")
-        System(uc4, "Čakalna lista za polne termine")
-        System(uc5, "Ustvari skupino & RSVP terminov")
-        System(uc6, "Klepet & statistika profila")
-    }
+**Branje diagrama**
 
-    System_Boundary(web, "Spletna konzola") {
-        System(oc1, "Registracija igrišča")
-        System(oc2, "Upravljaj urnik")
-        System(oc3, "Pregled rezervacij")
-        System(oc4, "Pregled prihodkov")
-    }
+| Element | Pomen |
+|---|---|
+| Palični lik | Akter (uporabnik ali zunanji sistem) |
+| Oval | Primer uporabe |
+| Modri pravokotnik | Meja sistema |
+| Polna črta brez puščice | Asociacija med akterjem in primerom uporabe |
+| Puščica s praznim trikotnikom | Generalizacija akterja (kaže od specializiranega k splošnemu) |
+| `<<Include>>` | Osnovni primer uporabe vedno vključuje drugega |
+| `<<Extend>>` | Razširitev, ki se izvede le pod določenim pogojem |
+| *extension points* | Točka v osnovnem primeru uporabe, kjer se razširitev vključi |
 
-    Rel(player, captain, "extends")
-    Rel(player, uc1, " ")
-    Rel(player, uc2, " ")
-    Rel(player, uc3, " ")
-    Rel(player, uc4, " ")
-    Rel(player, uc6, " ")
-    Rel(captain, uc5, " ")
-    Rel(captain, uc3, " ")
-    Rel(owner, oc1, " ")
-    Rel(owner, oc2, " ")
-    Rel(owner, oc3, " ")
-    Rel(owner, oc4, " ")
-```
+**Vloge**
+
+- **Gostitelj / Ustvarjalec tekme** in **Kapetan ekipe** sta specializaciji **Igralca** — podedujeta vse njegove primere uporabe in dodata svoje.
+- **Kapetan** ni ročna vloga: ob začetku tekme ga sistem samodejno dodeli igralcu z najvišjim ELO v vsaki ekipi (Cloud Function `assignCaptains`).
+- **Stripe** je zunanji akter — sodeluje samo pri plačilu najema igrišča.
+
+**Postopek zaključka tekme**
+
+- *Oddaj končni rezultat* **vključuje** (`<<Include>>`) *Zaključi tekmo in razdeli ELO / reputacijo*: ko se rezultata obeh kapetanov ujemata, se tekma samodejno zapre in ELO ter reputacija se razdelita vsem prisotnim igralcem.
+- *Vnos rezultata ob neujemanju kapetanov* **razširja** (`<<Extend>>`) oddajo rezultata: sproži se samo, če se kapetana ne strinjata, in je takrat na voljo vsem prijavljenim igralcem — velja rezultat večine.
 
 ---
 

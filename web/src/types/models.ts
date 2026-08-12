@@ -20,7 +20,7 @@ export type Venue = {
 export type ScheduleSlot = {
   id: string;
   venueId: string;
-  weekday: number;  // 0..6 (0=ned)
+  weekday: number;
   startHHMM: string;
   endHHMM: string;
   pricePerSlot: number;
@@ -33,10 +33,10 @@ export type Reservation = {
   id: string;
   venueId: string;
   ownerId: string;
-  bookedBy: string;       // mobile user uid
+  bookedBy: string;
   bookedByName?: string;
   matchId?: string;
-  date: Timestamp;        // dan
+  date: Timestamp;
   startHHMM: string;
   endHHMM: string;
   price: number;

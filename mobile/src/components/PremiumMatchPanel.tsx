@@ -2,11 +2,11 @@ import React from 'react';
 import { View, Text, TouchableOpacity, Alert, ActivityIndicator, ScrollView } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import {
-  Match, UserDoc, proposeGoal, confirmGoal, dismissPendingEvent,
-  checkIn, swapTeam, finalizeMatch, requiredConfirmations,
+  Match, UserDoc, checkIn, swapTeam, submitMatchScore,
   fetchInvitablePlayers, invitePlayerToMatch, regenerateTeams,
   resolveUserProfiles, suggestMissingPosition, PlayerPosition,
 } from '../services/matchService';
+import { syncBadges } from '../services/badgeService';
 import { useColors } from '../context/PremiumContext';
 import { makeStyles } from '../styles/PremiumMatchPanelStyles';
 
@@ -67,18 +67,32 @@ export default function PremiumMatchPanel({ match, userId, userNames }: Props) {
   const teamB = match.teamB ?? [];
   const scoreA = match.scoreA ?? 0;
   const scoreB = match.scoreB ?? 0;
-  const pending = match.pendingEvents ?? [];
   const finalized = !!match.finalized;
-  const threshold = requiredConfirmations(match.totalSpots);
-  const onTeam = teamA.includes(userId) || teamB.includes(userId);
 
-  const goalsByPlayer = React.useMemo(() => {
-    const map: Record<string, number> = {};
-    for (const e of (match.events ?? [])) {
-      if (e.scorerId) map[e.scorerId] = (map[e.scorerId] ?? 0) + 1;
-    }
-    return map;
-  }, [match.events]);
+  const phase = match.scorePhase ?? 'none';
+  const captains = [match.captainA, match.captainB].filter(Boolean) as string[];
+  const isCaptain = captains.includes(userId);
+  const submissions = match.scoreSubmissions ?? {};
+  const mySubmission = submissions[userId];
+  const canSubmitScore =
+    !finalized &&
+    ((phase === 'awaiting_captains' && isCaptain) || (phase === 'awaiting_all' && isJoined));
+
+  const [draftA, setDraftA] = React.useState(0);
+  const [draftB, setDraftB] = React.useState(0);
+
+  React.useEffect(() => {
+    if (!mySubmission) return;
+    setDraftA(mySubmission.scoreA);
+    setDraftB(mySubmission.scoreB);
+  }, [mySubmission?.scoreA, mySubmission?.scoreB]);
+
+  const badgesSynced = React.useRef(false);
+  React.useEffect(() => {
+    if (!finalized || badgesSynced.current || !isJoined) return;
+    badgesSynced.current = true;
+    syncBadges(userId).catch(() => {});
+  }, [finalized, isJoined, userId]);
 
   async function withBusy(fn: () => Promise<void>) {
     if (busy) return;
@@ -88,16 +102,35 @@ export default function PremiumMatchPanel({ match, userId, userNames }: Props) {
     finally { setBusy(false); }
   }
 
-  function handleScore() {
-    withBusy(() => proposeGoal(match.id, userId, userId));
-  }
-
-  function handleConfirm(eventId: string) {
-    withBusy(() => confirmGoal(match.id, eventId, userId));
-  }
-
-  function handleDismiss(eventId: string) {
-    withBusy(() => dismissPendingEvent(match.id, eventId, userId));
+  function handleSubmitScore() {
+    Alert.alert(
+      phase === 'awaiting_captains' ? 'Končaj tekmo' : 'Oddaj rezultat',
+      `Oddajaš rezultat ${draftA} - ${draftB}. Rezultata po oddaji ni več mogoče spremeniti. Nadaljuješ?`,
+      [
+        { text: 'Prekliči', style: 'cancel' },
+        {
+          text: 'Oddaj',
+          onPress: () => withBusy(async () => {
+            const res = await submitMatchScore(match.id, draftA, draftB);
+            if (res.status === 'resolved') {
+              const winner =
+                res.result === 'team_a_won' ? 'Ekipa A' :
+                res.result === 'team_b_won' ? 'Ekipa B' : 'Neodločeno';
+              Alert.alert('Tekma zaključena', `Zmagovalec: ${winner}\n\nELO in reputacija sta razdeljena vsem prisotnim igralcem.`);
+            } else if (res.status === 'disputed') {
+              Alert.alert(
+                'Rezultata se ne ujemata',
+                'Kapetana sta vnesla različen rezultat. Rezultat zdaj vnesejo vsi igralci — velja večina.',
+              );
+            } else if (res.status === 'waiting_other_captain') {
+              Alert.alert('Rezultat oddan', 'Čakamo še na drugega kapetana.');
+            } else {
+              Alert.alert('Rezultat oddan', 'Čakamo še na ostale igralce.');
+            }
+          }),
+        },
+      ]
+    );
   }
 
   function handleCheckIn() {
@@ -141,7 +174,8 @@ export default function PremiumMatchPanel({ match, userId, userNames }: Props) {
       const missing = suggestMissingPosition(match.sport, teamProfiles, teamTargetSize);
       setTargetPosition(missing);
 
-      const excluded = [...(match.players ?? []), ...(match.waitlist ?? [])];
+      const pendingIds = Object.keys(match.pendingInvites ?? {});
+      const excluded = [...(match.players ?? []), ...(match.waitlist ?? []), ...pendingIds];
       const players = await fetchInvitablePlayers(200, 20, excluded, {
         desiredPosition: missing,
         sport: match.sport,
@@ -168,31 +202,6 @@ export default function PremiumMatchPanel({ match, userId, userNames }: Props) {
     }
   }
 
-  function handleFinalize() {
-    Alert.alert(
-      'Končaj tekmo',
-      `Tekma se bo končala z rezultatom ${scoreA} - ${scoreB}. ELO in reputacija bosta posodobljena za vse prisotne igralce. Nadaljuješ?`,
-      [
-        { text: 'Prekliči', style: 'cancel' },
-        {
-          text: 'Končaj tekmo', style: 'destructive',
-          onPress: () => withBusy(async () => {
-            const res = await finalizeMatch(match.id, userId);
-            const winner = res.result === 'team_a_won' ? 'Ekipa A' : res.result === 'team_b_won' ? 'Ekipa B' : 'Neodločeno';
-            const lines = res.perPlayer
-              .map(p => {
-                const sign = p.dElo >= 0 ? '+' : '';
-                const goalNote = p.goals > 0 ? ` (${p.goals}⚽)` : '';
-                return `${resolveName(p.uid, userId, userNames)}: ${sign}${p.dElo} ELO${goalNote}, ${p.dRep >= 0 ? '+' : ''}${p.dRep} rep`;
-              })
-              .join('\n');
-            Alert.alert(`Zmagovalec: ${winner}`, lines || 'Ni sprememb.');
-          }),
-        },
-      ]
-    );
-  }
-
   if (finalized) {
     const winnerLabel =
       match.result === 'team_a_won' ? 'Zmaga Ekipe A' :
@@ -204,7 +213,12 @@ export default function PremiumMatchPanel({ match, userId, userNames }: Props) {
           <Text style={styles.resultEyebrow}>Končni rezultat</Text>
           <Text style={{ color: colors.text, fontSize: 56, fontWeight: '900', letterSpacing: -2 }}>{scoreA} - {scoreB}</Text>
           <Text style={styles.resultTitle}>{winnerLabel}</Text>
-          <Text style={styles.resultSub}>ELO razdeljen glede na zmago/poraz in dosežene gole (⚽). Reputacija za prisotnost.</Text>
+          <Text style={styles.resultSub}>
+            {match.scoreDisputed
+              ? 'Kapetana se nista strinjala — veljal je rezultat večine igralcev.'
+              : 'Rezultat sta potrdila oba kapetana.'}
+          </Text>
+          <Text style={styles.resultSub}>ELO razdeljen glede na zmago/poraz. Reputacija za prisotnost.</Text>
         </View>
         {renderTeams()}
       </View>
@@ -214,7 +228,7 @@ export default function PremiumMatchPanel({ match, userId, userNames }: Props) {
   function renderTeams() {
     function renderPlayer(uid: string, _idx: number) {
       const attended = match.attended?.includes(uid);
-      const goals = goalsByPlayer[uid] ?? 0;
+      const isPlayerCaptain = captains.includes(uid);
       const prof = profiles.get(uid);
       return (
         <View key={uid} style={styles.teamPlayer}>
@@ -222,7 +236,14 @@ export default function PremiumMatchPanel({ match, userId, userNames }: Props) {
             <Ionicons name="person" size={14} color={colors.primaryLight} />
           </View>
           <View style={{ flex: 1 }}>
-            <Text style={styles.teamPlayerName} numberOfLines={1}>{resolveName(uid, userId, userNames)}</Text>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5 }}>
+              <Text style={styles.teamPlayerName} numberOfLines={1}>{resolveName(uid, userId, userNames)}</Text>
+              {isPlayerCaptain && (
+                <View style={styles.captainBadge}>
+                  <Text style={styles.captainBadgeText}>K</Text>
+                </View>
+              )}
+            </View>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 2 }}>
               {prof && (
                 <Text style={{ color: colors.textMuted, fontSize: 10, fontWeight: '700' }}>
@@ -238,9 +259,8 @@ export default function PremiumMatchPanel({ match, userId, userNames }: Props) {
               )}
             </View>
           </View>
-          {goals > 0 && <Text style={styles.teamPlayerGoals}>⚽ {goals}</Text>}
           {attended ? <Text style={styles.teamPlayerAttended}>✓</Text> : null}
-          {isCreator && !finalized && (
+          {isCreator && !finalized && !match.matchStarted && (
             <TouchableOpacity style={styles.teamSwapBtn} onPress={() => handleSwap(uid)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
               <Ionicons name="swap-horizontal" size={16} color={colors.textMuted} />
             </TouchableOpacity>
@@ -252,6 +272,8 @@ export default function PremiumMatchPanel({ match, userId, userNames }: Props) {
     function renderTeamCard(team: 'A' | 'B') {
       const players = team === 'A' ? teamA : teamB;
       const isOpen = inviteTeam === team;
+      const pendingForTeam = Object.entries(match.pendingInvites ?? {})
+        .filter(([, inv]) => inv.team === team);
       return (
         <View key={team} style={styles.teamCard}>
           <View style={styles.teamHeaderRow}>
@@ -267,7 +289,20 @@ export default function PremiumMatchPanel({ match, userId, userNames }: Props) {
             )}
           </View>
           {players.map(renderPlayer)}
-          {players.length === 0 && <Text style={styles.pendingSubText}>Ni igralcev</Text>}
+          {pendingForTeam.map(([uid]) => (
+            <View key={`pending-${uid}`} style={[styles.teamPlayer, { opacity: 0.6 }]}>
+              <View style={[styles.teamPlayerAvatar, { backgroundColor: '#f59e0b18' }]}>
+                <Ionicons name="hourglass-outline" size={14} color="#f59e0b" />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={[styles.teamPlayerName, { color: '#f59e0b' }]} numberOfLines={1}>
+                  {resolveName(uid, userId, userNames)}
+                </Text>
+                <Text style={{ color: colors.textMuted, fontSize: 10, marginTop: 1 }}>Na čakanju…</Text>
+              </View>
+            </View>
+          ))}
+          {players.length === 0 && pendingForTeam.length === 0 && <Text style={styles.pendingSubText}>Ni igralcev</Text>}
         </View>
       );
     }
@@ -405,37 +440,123 @@ export default function PremiumMatchPanel({ match, userId, userNames }: Props) {
     );
   }
 
-  return (
-    <View style={{ gap: 18 }}>
-      <View style={styles.scoreboard}>
-        <View style={styles.scoreRow}>
-          <View style={styles.scoreSide}>
-            <Text style={styles.scoreTeamLabel}>Ekipa A</Text>
-            <Text style={styles.scoreValue}>{scoreA}</Text>
-          </View>
-          <Text style={styles.scoreSeparator}>:</Text>
-          <View style={styles.scoreSide}>
-            <Text style={styles.scoreTeamLabel}>Ekipa B</Text>
-            <Text style={styles.scoreValue}>{scoreB}</Text>
-          </View>
+  function renderStepperSide(label: string, value: number, setValue: (v: number) => void) {
+    const step = (delta: number) => setValue(Math.max(0, Math.min(99, value + delta)));
+    return (
+      <View style={styles.stepperCol}>
+        <Text style={styles.stepperTeamLabel}>{label}</Text>
+        <View style={styles.stepperControls}>
+          <TouchableOpacity
+            style={styles.stepperBtn}
+            onPress={() => step(-1)}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          >
+            <Ionicons name="remove" size={18} color={colors.text} />
+          </TouchableOpacity>
+          <Text style={styles.stepperValue}>{value}</Text>
+          <TouchableOpacity
+            style={styles.stepperBtn}
+            onPress={() => step(1)}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          >
+            <Ionicons name="add" size={18} color={colors.text} />
+          </TouchableOpacity>
+        </View>
+      </View>
+    );
+  }
+
+  function renderScorePanel() {
+    if (!match.matchStarted) return null;
+
+    if (phase === 'none') {
+      return (
+        <View style={styles.statusCard}>
+          <Ionicons name="hourglass-outline" size={18} color={colors.textMuted} />
+          <Text style={styles.statusText}>Določanje kapetanov …</Text>
+        </View>
+      );
+    }
+
+    const eligibleIds = phase === 'awaiting_captains'
+      ? captains
+      : [...new Set([...(match.players ?? []), ...captains])].filter(id => id.length > 10);
+    const submittedCount = eligibleIds.filter(id => submissions[id]).length;
+    const captainNames = captains.map(c => resolveName(c, userId, userNames)).join(' in ');
+    const disputed = phase === 'awaiting_all';
+    const canEdit = canSubmitScore && (!mySubmission || disputed);
+
+    return (
+      <View style={[styles.scorePanel, disputed && styles.scorePanelDisputed]}>
+        <View style={styles.scorePanelHeader}>
+          <Ionicons
+            name={disputed ? 'alert-circle' : 'flag'}
+            size={15}
+            color={disputed ? colors.warning : colors.primaryLight}
+          />
+          <Text style={[styles.scorePanelTitle, disputed && { color: colors.warning }]}>
+            {disputed ? 'Rezultat določajo vsi igralci' : 'Kapetana vneseta rezultat'}
+          </Text>
         </View>
 
-        {isJoined && onTeam && !finalized && (
-          <View style={styles.scoreBtnRow}>
-            <TouchableOpacity
-              style={[styles.scoreBtn, busy && styles.scoreBtnDisabled]}
-              onPress={handleScore}
-              disabled={busy}
-              activeOpacity={0.85}
-            >
-              <Ionicons name="football" size={18} color="#fff" />
-              <Text style={styles.scoreBtnText}>
-                Zadel sem gol (Ekipa {teamA.includes(userId) ? 'A' : 'B'})
-              </Text>
-            </TouchableOpacity>
+        <Text style={styles.scorePanelSub}>
+          {disputed
+            ? `Kapetana (${captainNames}) sta vnesla različen rezultat. Velja rezultat večine igralcev.`
+            : `Končni rezultat vneseta kapetana (${captainNames}). Če se ujemata, se tekma takoj zaključi in ELO se razdeli.`}
+        </Text>
+
+        {mySubmission && (
+          <View style={styles.submittedRow}>
+            <Ionicons name="checkmark-circle" size={16} color={colors.success} />
+            <Text style={styles.submittedText}>
+              Tvoj rezultat: {mySubmission.scoreA} - {mySubmission.scoreB}
+            </Text>
           </View>
         )}
+
+        {canEdit ? (
+          <>
+            <View style={styles.stepperRow}>
+              {renderStepperSide('Ekipa A', draftA, setDraftA)}
+              <Text style={styles.scoreSeparator}>:</Text>
+              {renderStepperSide('Ekipa B', draftB, setDraftB)}
+            </View>
+            <TouchableOpacity
+              style={styles.submitScoreBtn}
+              onPress={handleSubmitScore}
+              disabled={busy}
+              activeOpacity={0.9}
+            >
+              {busy ? <ActivityIndicator color="#fff" /> : (
+                <>
+                  <Ionicons name={mySubmission ? 'create' : 'flag'} size={18} color="#fff" />
+                  <Text style={styles.submitScoreBtnText}>
+                    {mySubmission
+                      ? 'Popravi rezultat'
+                      : phase === 'awaiting_captains'
+                        ? 'Končaj tekmo in oddaj rezultat'
+                        : 'Oddaj rezultat'}
+                  </Text>
+                </>
+              )}
+            </TouchableOpacity>
+          </>
+        ) : !mySubmission ? (
+          <Text style={styles.scorePanelWaiting}>
+            {disputed ? 'Čakamo na rezultate igralcev.' : 'Rezultat lahko vneseta samo kapetana.'}
+          </Text>
+        ) : null}
+
+        <Text style={styles.scorePanelProgress}>
+          Oddanih rezultatov: {submittedCount} / {eligibleIds.length}
+        </Text>
       </View>
+    );
+  }
+
+  return (
+    <View style={{ gap: 18 }}>
+      {renderScorePanel()}
 
       {isJoined && (
         <View style={styles.checkInBar}>
@@ -454,60 +575,7 @@ export default function PremiumMatchPanel({ match, userId, userNames }: Props) {
         </View>
       )}
 
-      {pending.length > 0 && (
-        <View style={styles.pendingCard}>
-          <View style={styles.pendingHeader}>
-            <Ionicons name="hourglass-outline" size={14} color={colors.warning} />
-            <Text style={styles.pendingTitle}>Čaka potrditve · potrebnih {threshold}</Text>
-          </View>
-          {pending.map((e, idx) => {
-            const alreadyConfirmed = e.confirmedBy.includes(userId);
-            const canConfirm = isJoined && !alreadyConfirmed;
-            return (
-              <View key={e.id} style={[styles.pendingItem, idx === 0 && styles.pendingItemFirst]}>
-                <View style={styles.pendingDot}>
-                  <Text style={{ color: colors.primaryLight, fontWeight: '900' }}>{e.team}</Text>
-                </View>
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.pendingText}>Gol · {resolveName(e.scorerId, userId, userNames)} (Ekipa {e.team})</Text>
-                  <Text style={styles.pendingSubText}>{e.confirmedBy.length} / {threshold} potrditev</Text>
-                </View>
-                <TouchableOpacity
-                  style={[styles.pendingConfirmBtn, !canConfirm && styles.pendingConfirmBtnDisabled]}
-                  onPress={() => handleConfirm(e.id)}
-                  disabled={!canConfirm || busy}
-                  activeOpacity={0.85}
-                >
-                  {busy ? <ActivityIndicator color="#fff" size="small" /> : (
-                    <>
-                      <Ionicons name="checkmark" size={14} color="#fff" />
-                      <Text style={styles.pendingConfirmBtnText}>{alreadyConfirmed ? 'POTRJENO' : 'POTRDI'}</Text>
-                    </>
-                  )}
-                </TouchableOpacity>
-                {isCreator && (
-                  <TouchableOpacity style={styles.pendingDismissBtn} onPress={() => handleDismiss(e.id)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-                    <Ionicons name="close" size={18} color={colors.textMuted} />
-                  </TouchableOpacity>
-                )}
-              </View>
-            );
-          })}
-        </View>
-      )}
-
       {renderTeams()}
-
-      {isCreator && (
-        <TouchableOpacity style={styles.finalizeBtn} onPress={handleFinalize} disabled={busy} activeOpacity={0.9}>
-          {busy ? <ActivityIndicator color="#fff" /> : (
-            <>
-              <Ionicons name="flag" size={18} color="#fff" />
-              <Text style={styles.finalizeBtnText}>Končaj tekmo in razdeli ELO</Text>
-            </>
-          )}
-        </TouchableOpacity>
-      )}
     </View>
   );
 }

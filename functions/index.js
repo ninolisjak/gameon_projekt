@@ -4,10 +4,13 @@ const Stripe = require('stripe');
 
 admin.initializeApp();
 
+const db = admin.firestore();
+const { FieldValue, Timestamp } = admin.firestore;
+
 const stripe = new Stripe(process.env.STRIPE_SECRET);
 
-const SUCCESS_BASE = 'https://gameon-9d876.firebaseapp.com/payment-success';
-const CANCEL_URL   = 'https://gameon-9d876.firebaseapp.com/payment-cancel';
+const SUCCESS_BASE = 'https://gameon-app.invalid/payment-success';
+const CANCEL_URL   = 'https://gameon-app.invalid/payment-cancel';
 
 exports.createCheckoutSession = functions
   .region('europe-west1')
@@ -54,4 +57,281 @@ exports.createPaymentIntent = functions
     });
 
     return { clientSecret: paymentIntent.client_secret };
+  });
+
+const STARTING_ELO = 700;
+const STARTING_REPUTATION = 50;
+const ELO_K = 32;
+const REP_ATTENDED = 2;
+const REP_NO_SHOW = -5;
+
+function isRealUid(uid) {
+  return typeof uid === 'string' && uid.length > 10;
+}
+
+function eloDelta(playerElo, oppTeamAvg, actual) {
+  const expected = 1 / (1 + Math.pow(10, (oppTeamAvg - playerElo) / 400));
+  return Math.round(ELO_K * (actual - expected));
+}
+
+exports.assignCaptains = functions
+  .region('europe-west1')
+  .firestore.document('matches/{matchId}')
+  .onUpdate(async (change) => {
+    const after = change.after.data();
+
+    if (!after.isPremium) return null;
+    if (after.finalized) return null;
+    if (after.matchStarted !== true) return null;
+    if (after.captainA || after.captainB) return null;
+
+    const patch = await buildCaptainPatch(after);
+    if (!patch) return null;
+    return change.after.ref.update(patch);
+  });
+
+async function buildCaptainPatch(match) {
+  const teamA = (match.teamA || []).filter(isRealUid);
+  const teamB = (match.teamB || []).filter(isRealUid);
+  const uids = [...new Set([...teamA, ...teamB])];
+  if (uids.length === 0) return null;
+
+  const elos = new Map();
+  await Promise.all(uids.map(async (uid) => {
+    try {
+      const snap = await db.collection('users').doc(uid).get();
+      const elo = snap.exists ? snap.data().elo : undefined;
+      elos.set(uid, elo === undefined || elo === null ? STARTING_ELO : elo);
+    } catch (e) {
+      elos.set(uid, STARTING_ELO);
+    }
+  }));
+
+  const pickCaptain = (team) => team.reduce(
+    (best, uid) => (best === null || elos.get(uid) > elos.get(best) ? uid : best),
+    null,
+  );
+
+  const captainA = pickCaptain(teamA);
+  const captainB = pickCaptain(teamB);
+  if (!captainA && !captainB) return null;
+
+  const patch = {
+    scorePhase: 'awaiting_captains',
+    scoreSubmissions: {},
+    scoreDisputed: false,
+  };
+  if (captainA) patch.captainA = captainA;
+  if (captainB) patch.captainB = captainB;
+  return patch;
+}
+
+async function resolveMatch(tx, matchRef, match, scoreA, scoreB, submissions) {
+  const matchId = matchRef.id;
+  const teamA = match.teamA || [];
+  const teamB = match.teamB || [];
+  const attended = match.attended || [];
+
+  const result = scoreA > scoreB ? 'team_a_won' : scoreB > scoreA ? 'team_b_won' : 'draw';
+
+  const allPlayers = [...new Set([...teamA, ...teamB])];
+  const snaps = allPlayers.length
+    ? await tx.getAll(...allPlayers.map((uid) => db.collection('users').doc(uid)))
+    : [];
+
+  const stats = allPlayers.map((uid, i) => {
+    const d = snaps[i] && snaps[i].exists ? snaps[i].data() : null;
+    return {
+      uid,
+      elo: d && d.elo !== undefined && d.elo !== null ? d.elo : STARTING_ELO,
+      reputation: d && d.reputation !== undefined && d.reputation !== null ? d.reputation : STARTING_REPUTATION,
+    };
+  });
+
+  const eloMap = new Map(stats.map((s) => [s.uid, s.elo]));
+  const avg = (team) => (team.length === 0
+    ? STARTING_ELO
+    : team.reduce((sum, uid) => sum + (eloMap.has(uid) ? eloMap.get(uid) : STARTING_ELO), 0) / team.length);
+
+  const avgA = avg(teamA);
+  const avgB = avg(teamB);
+  const actualA = result === 'team_a_won' ? 1 : result === 'draw' ? 0.5 : 0;
+
+  const perPlayer = stats.map((s) => {
+    const onA = teamA.includes(s.uid);
+    const oppAvg = onA ? avgB : avgA;
+    const actual = onA ? actualA : 1 - actualA;
+    const hasAttended = attended.includes(s.uid);
+
+    const dElo = hasAttended ? eloDelta(s.elo, oppAvg, actual) : 0;
+    const dRep = hasAttended ? REP_ATTENDED : REP_NO_SHOW;
+
+    return {
+      uid: s.uid,
+      team: onA ? 'A' : 'B',
+      eloBefore: s.elo,
+      dElo,
+      dRep,
+      repReason: hasAttended ? 'attended' : 'no_show',
+      isWin: hasAttended && (onA ? result === 'team_a_won' : result === 'team_b_won'),
+      isLoss: hasAttended && (onA ? result === 'team_b_won' : result === 'team_a_won'),
+      isDraw: hasAttended && result === 'draw',
+      newElo: Math.max(0, s.elo + dElo),
+      newRep: Math.max(0, Math.min(100, s.reputation + dRep)),
+    };
+  });
+
+  const now = Timestamp.now();
+
+  for (const p of perPlayer) {
+    if (!isRealUid(p.uid)) continue;
+
+    const userRef = db.collection('users').doc(p.uid);
+    const patch = {
+      uid: p.uid,
+      elo: p.newElo,
+      reputation: p.newRep,
+      updatedAt: now,
+      matchesPlayed: FieldValue.increment(1),
+    };
+    if (p.isWin) patch.wins = FieldValue.increment(1);
+    else if (p.isLoss) patch.losses = FieldValue.increment(1);
+    else if (p.isDraw) patch.draws = FieldValue.increment(1);
+    tx.set(userRef, patch, { merge: true });
+
+    tx.set(userRef.collection('reputationLog').doc(), {
+      delta: p.dRep,
+      reason: p.repReason,
+      matchId,
+      balanceAfter: p.newRep,
+      createdAt: now,
+    });
+
+    tx.set(userRef.collection('matchHistory').doc(), {
+      matchId,
+      sport: match.sport,
+      locationName: (match.location && match.location.name) || '',
+      datetime: match.datetime,
+      team: p.team,
+      scoreA,
+      scoreB,
+      outcome: p.repReason === 'no_show' ? 'no_show' : p.isWin ? 'win' : p.isLoss ? 'loss' : 'draw',
+      goals: 0,
+      eloBefore: p.eloBefore,
+      eloDelta: p.dElo,
+      eloAfter: p.newElo,
+      createdAt: now,
+    });
+  }
+
+  tx.update(matchRef, {
+    scoreA,
+    scoreB,
+    result,
+    finalized: true,
+    status: 'closed',
+    scorePhase: 'resolved',
+    scoreSubmissions: submissions,
+  });
+
+  return result;
+}
+
+exports.submitMatchScore = functions
+  .region('europe-west1')
+  .https.onCall(async (data, context) => {
+    const uid = context.auth && context.auth.uid;
+    if (!uid) throw new functions.https.HttpsError('unauthenticated', 'Prijava je obvezna.');
+
+    const matchId = data && data.matchId;
+    const scoreA = Number(data && data.scoreA);
+    const scoreB = Number(data && data.scoreB);
+
+    if (!matchId) throw new functions.https.HttpsError('invalid-argument', 'Manjka ID tekme.');
+    if (!Number.isInteger(scoreA) || !Number.isInteger(scoreB)
+      || scoreA < 0 || scoreB < 0 || scoreA > 99 || scoreB > 99) {
+      throw new functions.https.HttpsError('invalid-argument', 'Neveljaven rezultat.');
+    }
+
+    const matchRef = db.collection('matches').doc(matchId);
+
+    return db.runTransaction(async (tx) => {
+      const snap = await tx.get(matchRef);
+      if (!snap.exists) throw new functions.https.HttpsError('not-found', 'Tekma ne obstaja.');
+
+      const match = snap.data();
+      if (!match.isPremium) throw new functions.https.HttpsError('failed-precondition', 'Samo Premium tekme imajo rezultat.');
+      if (match.finalized) throw new functions.https.HttpsError('already-exists', 'Tekma je že zaključena.');
+      if (!match.matchStarted) throw new functions.https.HttpsError('failed-precondition', 'Tekma se še ni začela.');
+
+      const phase = match.scorePhase || 'none';
+      const players = match.players || [];
+      const captains = [match.captainA, match.captainB].filter(Boolean);
+
+      if (phase === 'awaiting_captains') {
+        if (!captains.includes(uid)) {
+          throw new functions.https.HttpsError('permission-denied', 'Rezultat lahko vneseta samo kapetana.');
+        }
+      } else if (phase === 'awaiting_all') {
+        if (!players.includes(uid) && !captains.includes(uid)) {
+          throw new functions.https.HttpsError('permission-denied', 'Samo prijavljeni igralci lahko vnesejo rezultat.');
+        }
+      } else {
+        throw new functions.https.HttpsError('failed-precondition', 'Vnos rezultata trenutno ni mogoč.');
+      }
+
+      const submissions = Object.assign({}, match.scoreSubmissions || {});
+      submissions[uid] = { scoreA, scoreB, submittedAt: Timestamp.now() };
+
+      if (phase === 'awaiting_captains') {
+        const submitted = captains.filter((c) => submissions[c]);
+        if (submitted.length < captains.length) {
+          tx.update(matchRef, { scoreSubmissions: submissions });
+          return { status: 'waiting_other_captain' };
+        }
+
+        const first = submissions[captains[0]];
+        const agree = captains.every(
+          (c) => submissions[c].scoreA === first.scoreA && submissions[c].scoreB === first.scoreB,
+        );
+
+        if (agree) {
+          const result = await resolveMatch(tx, matchRef, match, first.scoreA, first.scoreB, submissions);
+          return { status: 'resolved', result };
+        }
+
+        tx.update(matchRef, {
+          scoreSubmissions: submissions,
+          scorePhase: 'awaiting_all',
+          scoreDisputed: true,
+        });
+        return { status: 'disputed' };
+      }
+
+      const eligible = new Set([...players, ...captains].filter(isRealUid));
+      const tally = new Map();
+      for (const [pid, s] of Object.entries(submissions)) {
+        if (!eligible.has(pid)) continue;
+        const key = `${s.scoreA}-${s.scoreB}`;
+        const cur = tally.get(key) || { scoreA: s.scoreA, scoreB: s.scoreB, count: 0, earliest: Infinity };
+        cur.count += 1;
+        const ts = s.submittedAt && s.submittedAt.toMillis ? s.submittedAt.toMillis() : 0;
+        if (ts < cur.earliest) cur.earliest = ts;
+        tally.set(key, cur);
+      }
+
+      const ranked = [...tally.values()].sort((a, b) => b.count - a.count || a.earliest - b.earliest);
+      const top = ranked[0];
+      const submittedCount = Object.keys(submissions).filter((p) => eligible.has(p)).length;
+      const hasMajority = top && top.count > eligible.size / 2;
+      const allSubmitted = submittedCount >= eligible.size;
+
+      if (top && (hasMajority || allSubmitted)) {
+        const result = await resolveMatch(tx, matchRef, match, top.scoreA, top.scoreB, submissions);
+        return { status: 'resolved', result };
+      }
+
+      tx.update(matchRef, { scoreSubmissions: submissions });
+      return { status: 'waiting_more_players' };
+    });
   });

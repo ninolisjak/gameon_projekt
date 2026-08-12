@@ -40,7 +40,7 @@ export function aggregateRevenue(
       key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
     } else {
       const monday = new Date(d);
-      const day = (monday.getDay() + 6) % 7;  // pon=0
+      const day = (monday.getDay() + 6) % 7;
       monday.setDate(monday.getDate() - day);
       key = monday.toISOString().slice(0, 10);
     }

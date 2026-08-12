@@ -11,7 +11,6 @@ export default function ScheduleEditPage() {
   const [slots, setSlots] = React.useState<ScheduleSlot[]>([]);
   const [loading, setLoading] = React.useState(true);
 
-  // new slot form
   const [newWeekday, setNewWeekday] = React.useState(1);
   const [newStart, setNewStart] = React.useState('18:00');
   const [newEnd, setNewEnd] = React.useState('19:00');
