@@ -33,7 +33,7 @@ jest.mock('firebase/functions', () => ({
 
 import { weatherDescription } from '../weatherService';
 import { playerStrength, userToBalanceInput, computeBalanceScore, balanceTeams, BalanceInput } from '../teamBalancer';
-import { requiredConfirmations, STARTING_ELO, UserDoc } from '../matchService';
+import { suggestMissingPosition, STARTING_ELO, UserDoc, PlayerPosition } from '../matchService';
 
 function makePlayer(o: Partial<BalanceInput> = {}): BalanceInput {
   return { uid: 'p1', elo: 700, winRate: 0.5, matchesPlayed: 10, ...o };
@@ -139,20 +139,105 @@ describe('balanceTeams — mejno število igralcev', () => {
   });
 });
 
-describe('requiredConfirmations — meje zaokroževanja', () => {
-  it('0 mest → spodnja meja 2', () => expect(requiredConfirmations(0)).toBe(2));
-  it('negativno → spodnja meja 2', () => expect(requiredConfirmations(-5)).toBe(2));
-  it('6 mest (točno deljivo) → 2', () => expect(requiredConfirmations(6)).toBe(2));
-  it('7 mest (tik nad 6) → 3', () => expect(requiredConfirmations(7)).toBe(3));
-  it('9 mest (točno deljivo) → 3', () => expect(requiredConfirmations(9)).toBe(3));
-  it('10 mest (tik nad 9) → 4', () => expect(requiredConfirmations(10)).toBe(4));
-  it('nikoli pod 2', () => [-100, 0, 1, 6].forEach(n => expect(requiredConfirmations(n)).toBeGreaterThanOrEqual(2)));
-  it('monotona funkcija', () => {
-    let prev = requiredConfirmations(1);
-    for (let n = 2; n <= 40; n++) {
-      const cur = requiredConfirmations(n);
-      expect(cur).toBeGreaterThanOrEqual(prev);
-      prev = cur;
-    }
+// ────────────────────────────────────────────────────────────────
+// suggestMissingPosition — katera pozicija v ekipi manjka
+//
+// Pri futsalu velja posebno pravilo: če v ekipi ni vratarja IN je ciljna
+// velikost ekipe vsaj 4, funkcija vedno predlaga vratarja. Meja je
+// teamTargetSize === 4, zato jo preverimo pri 3, 4 in 5.
+// Sicer vrne pozicijo z najmanj igralci.
+// ────────────────────────────────────────────────────────────────
+
+const FUTSAL: PlayerPosition[] = ['goalkeeper', 'defender', 'midfielder', 'forward'];
+const BASKETBALL: PlayerPosition[] = ['guard', 'forward', 'center'];
+
+describe('suggestMissingPosition — mejna velikost ekipe pri futsalu', () => {
+  const brezVratarja = [
+    { uid: 'a', position: 'defender' as PlayerPosition },
+    { uid: 'b', position: 'midfielder' as PlayerPosition },
+  ];
+
+  it('ekipa 3 (tik pod mejo) — vratar', () => {
+    expect(suggestMissingPosition('futsal', brezVratarja, 3)).toBe('goalkeeper');
+  });
+
+  it('ekipa 4 (točno na meji) — vratar', () => {
+    expect(suggestMissingPosition('futsal', brezVratarja, 4)).toBe('goalkeeper');
+  });
+
+  it('ekipa 5 (tik nad mejo) — vratar', () => {
+    expect(suggestMissingPosition('futsal', brezVratarja, 5)).toBe('goalkeeper');
+  });
+
+  it('ekipa 0 (degenerirani primer) — vrne veljavno pozicijo', () => {
+    const r = suggestMissingPosition('futsal', brezVratarja, 0);
+    expect(FUTSAL).toContain(r);
+  });
+
+  it('ko je vratar že v ekipi, predlaga pozicijo z najmanj igralci', () => {
+    const zVratarjem = [
+      { uid: 'a', position: 'goalkeeper' as PlayerPosition },
+      { uid: 'b', position: 'defender' as PlayerPosition },
+      { uid: 'c', position: 'midfielder' as PlayerPosition },
+    ];
+    expect(suggestMissingPosition('futsal', zVratarjem, 5)).toBe('forward');
+  });
+});
+
+describe('suggestMissingPosition — robni vhodi', () => {
+  it('prazna ekipa vrne veljavno pozicijo', () => {
+    const r = suggestMissingPosition('futsal', [], 5);
+    expect(FUTSAL).toContain(r);
+  });
+
+  it('igralci brez določene pozicije ne pokvarijo štetja', () => {
+    const brezPozicij = [{ uid: 'a' }, { uid: 'b' }, { uid: 'c' }];
+    const r = suggestMissingPosition('futsal', brezPozicij, 5);
+    expect(r).toBe('goalkeeper');
+  });
+
+  it('pozicija iz napačnega športa se pri štetju izpusti', () => {
+    // 'center' je košarkarska pozicija; pri futsalu se ne sme šteti
+    const mesano = [
+      { uid: 'a', position: 'goalkeeper' as PlayerPosition },
+      { uid: 'b', position: 'center' as PlayerPosition },
+    ];
+    const r = suggestMissingPosition('futsal', mesano, 5);
+    expect(FUTSAL).toContain(r);
+    expect(r).not.toBe('center');
+  });
+
+  it('pri košarki nikoli ne predlaga vratarja', () => {
+    const r = suggestMissingPosition('basketball', [], 5);
+    expect(BASKETBALL).toContain(r);
+    expect(r).not.toBe('goalkeeper');
+  });
+
+  it('pri košarki upošteva le košarkarske pozicije', () => {
+    const ekipa = [
+      { uid: 'a', position: 'guard' as PlayerPosition },
+      { uid: 'b', position: 'center' as PlayerPosition },
+    ];
+    expect(suggestMissingPosition('basketball', ekipa, 5)).toBe('forward');
+  });
+
+  it('enakomerno zasedena ekipa vrne prvo pozicijo po vrsti', () => {
+    const polna = [
+      { uid: 'a', position: 'goalkeeper' as PlayerPosition },
+      { uid: 'b', position: 'defender' as PlayerPosition },
+      { uid: 'c', position: 'midfielder' as PlayerPosition },
+      { uid: 'd', position: 'forward' as PlayerPosition },
+    ];
+    expect(suggestMissingPosition('futsal', polna, 5)).toBe('goalkeeper');
+  });
+
+  it('vrne pozicijo, ki v ekipi še ni zastopana', () => {
+    const ekipa = [
+      { uid: 'a', position: 'goalkeeper' as PlayerPosition },
+      { uid: 'b', position: 'defender' as PlayerPosition },
+      { uid: 'c', position: 'defender' as PlayerPosition },
+      { uid: 'd', position: 'forward' as PlayerPosition },
+    ];
+    expect(suggestMissingPosition('futsal', ekipa, 5)).toBe('midfielder');
   });
 });
