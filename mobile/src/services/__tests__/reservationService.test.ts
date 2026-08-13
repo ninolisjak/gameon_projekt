@@ -1,315 +1,412 @@
-jest.mock('../../config/firebase', () => ({ db: {} }));
 
-const mockStore = new Map<string, any>();
-const mockVersions = new Map<string, number>();
+jest.mock('../../config/firebase', () => ({ db: {}, functions: {} }));
+
+const mockCallable = jest.fn(async () => ({
+  data: { reservationId: 'rez-1', price: 30 },
+}));
+
+jest.mock('firebase/functions', () => ({
+  httpsCallable: jest.fn(() => mockCallable),
+}));
 
 jest.mock('firebase/firestore', () => ({
   collection: jest.fn((_db: any, ...path: string[]) => ({ path: path.join('/') })),
-
-  doc: jest.fn((_db: any, ...path: string[]) => ({ id: path[path.length - 1], path: path.join('/') })),
-
-  query: jest.fn((ref: any, ...constraints: any[]) => ({ ref, constraints })),
-
+  doc: jest.fn((_db: any, ...path: string[]) => ({ path: path.join('/'), id: path[path.length - 1] })),
+  query: jest.fn((ref: any, ...c: any[]) => ({ ref, c })),
   where: jest.fn((field: string, op: string, value: any) => ({ field, op, value })),
-
   getDocs: jest.fn(),
-
-  updateDoc: jest.fn(async (ref: any, patch: any) => {
-    const current = mockStore.get(ref.id) ?? {};
-    mockStore.set(ref.id, { ...current, ...patch });
-    mockVersions.set(ref.id, (mockVersions.get(ref.id) ?? 0) + 1);
-  }),
-
-runTransaction: jest.fn(async (_db: any, updateFn: any) => {
-    const MAX_ATTEMPTS = 5;
-
-    for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
-      const readVersions = new Map<string, number>();
-      const pendingWrites: { id: string; value?: any; patch?: any }[] = [];
-
-      const tx = {
-        get: async (ref: any) => {
-          readVersions.set(ref.id, mockVersions.get(ref.id) ?? 0);
-          const data = mockStore.get(ref.id);
-          return {
-            exists: () => data !== undefined,
-            data: () => data,
-            id: ref.id,
-          };
-        },
-        set: (ref: any, value: any) => {
-          pendingWrites.push({ id: ref.id, value });
-        },
-        update: (ref: any, patch: any) => {
-          pendingWrites.push({ id: ref.id, patch });
-        },
-      };
-
-      const result = await updateFn(tx);
-
-      let conflict = false;
-      for (const [id, versionAtRead] of readVersions) {
-        if ((mockVersions.get(id) ?? 0) !== versionAtRead) {
-          conflict = true;
-          break;
-        }
-      }
-      if (conflict) continue;
-
-      for (const write of pendingWrites) {
-        if (write.value !== undefined) {
-          mockStore.set(write.id, write.value);
-        } else {
-          mockStore.set(write.id, { ...(mockStore.get(write.id) ?? {}), ...write.patch });
-        }
-        mockVersions.set(write.id, (mockVersions.get(write.id) ?? 0) + 1);
-      }
-
-      return result;
-    }
-
-    throw new Error('Transakcija ni uspela po največjem številu poskusov.');
-  }),
-
-  Timestamp: {
-    now: jest.fn(() => ({ toDate: () => new Date('2026-06-01T12:00:00Z') })),
-    fromDate: jest.fn((d: Date) => ({ toDate: () => d })),
-  },
+  updateDoc: jest.fn(async () => {}),
 }));
 
-import { getDocs } from 'firebase/firestore';
+import { getDocs, updateDoc } from 'firebase/firestore';
 import {
+  hhmmToMinutes,
+  rangesOverlap,
+  toDateKey,
   buildReservationId,
+  fetchActiveVenues,
+  fetchVenueSchedule,
+  fetchBookedSlots,
+  fetchMyReservations,
   createReservation,
-  fetchReservationsForDate,
   cancelReservation,
-  Reservation,
+  markReservationPaid,
 } from '../reservationService';
 
-const BASE = {
-  venueId: 'venue1',
-  ownerId: 'owner1',
-  bookedBy: 'userA',
-  date: new Date(2026, 5, 15, 0, 0, 0),
-  startHHMM: '18:00',
-  endHHMM: '19:00',
-  price: 30,
-};
+function mockSnapshot(rows: any[]) {
+  (getDocs as jest.Mock).mockResolvedValueOnce({
+    docs: rows.map((r, i) => ({ id: r.id ?? `d${i}`, data: () => r })),
+  });
+}
 
 beforeEach(() => {
-  mockStore.clear();
   jest.clearAllMocks();
-  mockVersions.clear();
+  mockCallable.mockResolvedValue({ data: { reservationId: 'rez-1', price: 30 } });
 });
 
-describe('buildReservationId', () => {
-  it('isti vhodi dajo vedno isti ID', () => {
+//hhmmToMinutes
+
+describe('hhmmToMinutes — pretvorba časa v minute', () => {
+  it('polnoč je nič minut (spodnja meja)', () => {
+    expect(hhmmToMinutes('00:00')).toBe(0);
+  });
+
+  it('zadnja minuta dneva je 1439 (zgornja meja)', () => {
+    expect(hhmmToMinutes('23:59')).toBe(1439);
+  });
+
+  it('ura 24 je neveljavna (tik nad mejo)', () => {
+    expect(hhmmToMinutes('24:00')).toBeNaN();
+  });
+
+  it('minuta 60 je neveljavna (tik nad mejo)', () => {
+    expect(hhmmToMinutes('12:60')).toBeNaN();
+  });
+
+  it('minuta 59 je veljavna (na meji)', () => {
+    expect(hhmmToMinutes('12:59')).toBe(779);
+  });
+
+  it('enomestna ura brez vodilne ničle je sprejeta', () => {
+    expect(hhmmToMinutes('9:30')).toBe(570);
+  });
+
+  it('enomestna minuta je zavrnjena', () => {
+    expect(hhmmToMinutes('9:3')).toBeNaN();
+  });
+
+  it('zapis brez dvopičja je zavrnjen', () => {
+    expect(hhmmToMinutes('1800')).toBeNaN();
+  });
+
+  it('prazen niz je zavrnjen', () => {
+    expect(hhmmToMinutes('')).toBeNaN();
+  });
+
+  it('nedefinirana vrednost je zavrnjena', () => {
+    expect(hhmmToMinutes(undefined as any)).toBeNaN();
+  });
+
+  it('besedilo je zavrnjeno', () => {
+    expect(hhmmToMinutes('osemnajst')).toBeNaN();
+  });
+
+  it('negativni zapis je zavrnjen', () => {
+    expect(hhmmToMinutes('-1:00')).toBeNaN();
+  });
+
+  it('celo uro pretvori v mnogokratnik šestdesetih', () => {
+    expect(hhmmToMinutes('18:00')).toBe(1080);
+  });
+});
+
+//rangesOverlap
+
+describe('rangesOverlap — prekrivanje terminov', () => {
+  it('zaporedna termina se ne prekrivata (dotik na meji)', () => {
+    expect(rangesOverlap('18:00', '19:00', '19:00', '20:00')).toBe(false);
+  });
+
+  it('zaporedna termina v obratnem vrstnem redu se ne prekrivata', () => {
+    expect(rangesOverlap('19:00', '20:00', '18:00', '19:00')).toBe(false);
+  });
+
+  it('prekrivanje ene minute je prekrivanje (tik čez mejo)', () => {
+    expect(rangesOverlap('18:00', '19:01', '19:00', '20:00')).toBe(true);
+  });
+
+  it('enaka termina se prekrivata', () => {
+    expect(rangesOverlap('18:00', '19:00', '18:00', '19:00')).toBe(true);
+  });
+
+  it('termin v celoti znotraj drugega se prekriva', () => {
+    expect(rangesOverlap('18:15', '18:45', '18:00', '19:00')).toBe(true);
+  });
+
+  it('termin, ki obsega drugega, se prekriva', () => {
+    expect(rangesOverlap('17:00', '21:00', '18:00', '19:00')).toBe(true);
+  });
+
+  it('delno prekrivanje na začetku', () => {
+    expect(rangesOverlap('17:30', '18:30', '18:00', '19:00')).toBe(true);
+  });
+
+  it('delno prekrivanje na koncu', () => {
+    expect(rangesOverlap('18:30', '19:30', '18:00', '19:00')).toBe(true);
+  });
+
+  it('povsem ločena termina se ne prekrivata', () => {
+    expect(rangesOverlap('08:00', '09:00', '18:00', '19:00')).toBe(false);
+  });
+
+  it('neveljaven zapis pomeni, da prekrivanja ne ugotovimo', () => {
+    expect(rangesOverlap('nekaj', '19:00', '18:00', '19:00')).toBe(false);
+  });
+
+  it('neveljaven zapis v drugem terminu prav tako', () => {
+    expect(rangesOverlap('18:00', '19:00', '18:00', '25:00')).toBe(false);
+  });
+
+  it('termin ničelne dolžine se ne prekriva z ničimer', () => {
+    expect(rangesOverlap('18:00', '18:00', '18:00', '19:00')).toBe(false);
+  });
+});
+
+//toDateKey
+
+describe('toDateKey — ključ datuma', () => {
+  it('sestavi obliko leto-mesec-dan', () => {
+    expect(toDateKey(new Date(2026, 5, 15))).toBe('2026-06-15');
+  });
+
+  it('enomestni mesec dopolni z ničlo', () => {
+    expect(toDateKey(new Date(2026, 0, 15))).toBe('2026-01-15');
+  });
+
+  it('enomestni dan dopolni z ničlo', () => {
+    expect(toDateKey(new Date(2026, 5, 5))).toBe('2026-06-05');
+  });
+
+  it('prvi dan leta', () => {
+    expect(toDateKey(new Date(2026, 0, 1))).toBe('2026-01-01');
+  });
+
+  it('zadnji dan leta', () => {
+    expect(toDateKey(new Date(2026, 11, 31))).toBe('2026-12-31');
+  });
+
+  it('prestopni dan', () => {
+    expect(toDateKey(new Date(2028, 1, 29))).toBe('2028-02-29');
+  });
+
+  it('ura na ključ ne vpliva', () => {
+    expect(toDateKey(new Date(2026, 5, 15, 23, 59))).toBe('2026-06-15');
+  });
+});
+
+//buildReservationId
+
+describe('buildReservationId — determinističen ključ', () => {
+  it('isti vhodi dajo isti ID', () => {
     const a = buildReservationId('venue1', new Date(2026, 5, 15), '18:00');
     const b = buildReservationId('venue1', new Date(2026, 5, 15), '18:00');
     expect(a).toBe(b);
   });
 
+  it('sestavljen je iz igrišča, datuma in ure', () => {
+    expect(buildReservationId('venue1', new Date(2026, 5, 15), '18:00'))
+      .toBe('venue1_2026-06-15_1800');
+  });
+
   it('drugo igrišče da drug ID', () => {
-    const a = buildReservationId('venue1', new Date(2026, 5, 15), '18:00');
-    const b = buildReservationId('venue2', new Date(2026, 5, 15), '18:00');
-    expect(a).not.toBe(b);
+    expect(buildReservationId('venue1', new Date(2026, 5, 15), '18:00'))
+      .not.toBe(buildReservationId('venue2', new Date(2026, 5, 15), '18:00'));
   });
 
   it('drug datum da drug ID', () => {
-    const a = buildReservationId('venue1', new Date(2026, 5, 15), '18:00');
-    const b = buildReservationId('venue1', new Date(2026, 5, 16), '18:00');
-    expect(a).not.toBe(b);
+    expect(buildReservationId('venue1', new Date(2026, 5, 15), '18:00'))
+      .not.toBe(buildReservationId('venue1', new Date(2026, 5, 16), '18:00'));
   });
 
   it('druga ura da drug ID', () => {
-    const a = buildReservationId('venue1', new Date(2026, 5, 15), '18:00');
-    const b = buildReservationId('venue1', new Date(2026, 5, 15), '19:00');
-    expect(a).not.toBe(b);
+    expect(buildReservationId('venue1', new Date(2026, 5, 15), '18:00'))
+      .not.toBe(buildReservationId('venue1', new Date(2026, 5, 15), '19:00'));
   });
 
-  it('enomestni mesec in dan sta dopolnjena z ničlo', () => {
-    const id = buildReservationId('v', new Date(2026, 0, 5), '09:00');
-    expect(id).toBe('v_2026-01-05_0900');
+  it('ID ne vsebuje poševnice, ki je Firestore ne dovoli', () => {
+    expect(buildReservationId('venue1', new Date(2026, 5, 15), '18:00')).not.toContain('/');
   });
 
-  it('ID ne vsebuje poševnice (Firestore je ne dovoli v ID-ju)', () => {
-    const id = buildReservationId('venue1', new Date(2026, 5, 15), '18:00');
-    expect(id).not.toContain('/');
-  });
-
-  it('ura ob polnoči da veljaven ID', () => {
-    const id = buildReservationId('v', new Date(2026, 11, 31), '00:00');
-    expect(id).toBe('v_2026-12-31_0000');
+  it('ID ne vsebuje dvopičja', () => {
+    expect(buildReservationId('venue1', new Date(2026, 5, 15), '18:00')).not.toContain(':');
   });
 });
 
-describe('createReservation — osnovni tok', () => {
-  it('prosti termin se uspešno rezervira', async () => {
-    const id = await createReservation(BASE);
-    expect(mockStore.has(id)).toBe(true);
-    expect(mockStore.get(id).status).toBe('confirmed');
+//fetchActiveVenues
+
+describe('fetchActiveVenues', () => {
+  const futsal = { name: 'A', sport: 'futsal', active: true };
+  const basket = { name: 'B', sport: 'basketball', active: true };
+  const both = { name: 'C', sport: 'both', active: true };
+
+  it('brez filtra vrne vsa aktivna igrišča', async () => {
+    mockSnapshot([futsal, basket, both]);
+    expect(await fetchActiveVenues()).toHaveLength(3);
   });
 
-  it('vrne determinističen ID, ne naključnega', async () => {
-    const id = await createReservation(BASE);
-    expect(id).toBe(buildReservationId(BASE.venueId, BASE.date, BASE.startHHMM));
+  it('filter za futsal vključi tudi igrišča za oba športa', async () => {
+    mockSnapshot([futsal, basket, both]);
+    const r = await fetchActiveVenues('futsal');
+    expect(r.map(v => v.name)).toEqual(['A', 'C']);
   });
 
-  it('novo rezervacijo označi kot neplačano', async () => {
-    const id = await createReservation(BASE);
-    expect(mockStore.get(id).paid).toBe(false);
+  it('filter za košarko vključi tudi igrišča za oba športa', async () => {
+    mockSnapshot([futsal, basket, both]);
+    const r = await fetchActiveVenues('basketball');
+    expect(r.map(v => v.name)).toEqual(['B', 'C']);
   });
 
-  it('shrani uporabnika, ki je rezerviral', async () => {
-    const id = await createReservation(BASE);
-    expect(mockStore.get(id).bookedBy).toBe('userA');
+  it('prazna zbirka vrne prazen seznam', async () => {
+    mockSnapshot([]);
+    expect(await fetchActiveVenues('futsal')).toEqual([]);
   });
 });
 
-describe('createReservation — preprečevanje dvojnih rezervacij', () => {
-  it('drugi uporabnik na istem terminu dobi napako', async () => {
-    await createReservation({ ...BASE, bookedBy: 'userA' });
+//fetchVenueSchedule
 
-    await expect(
-      createReservation({ ...BASE, bookedBy: 'userB' })
-    ).rejects.toThrow('Ta termin je že rezerviran. Izberi drug termin.');
-  });
-
-  it('po neuspelem drugem poskusu ostane zapisan prvi uporabnik', async () => {
-    const id = await createReservation({ ...BASE, bookedBy: 'userA' });
-
-    await expect(
-      createReservation({ ...BASE, bookedBy: 'userB' })
-    ).rejects.toThrow();
-
-    expect(mockStore.get(id).bookedBy).toBe('userA');
-  });
-
-  it('v shrambi nastane natanko en zapis, tudi po dveh poskusih', async () => {
-    await createReservation({ ...BASE, bookedBy: 'userA' });
-    await createReservation({ ...BASE, bookedBy: 'userB' }).catch(() => {});
-
-    expect(mockStore.size).toBe(1);
-  });
-
-  it('pri treh hkratnih poskusih uspe natanko eden', async () => {
-    const results = await Promise.allSettled([
-      createReservation({ ...BASE, bookedBy: 'userA' }),
-      createReservation({ ...BASE, bookedBy: 'userB' }),
-      createReservation({ ...BASE, bookedBy: 'userC' }),
+describe('fetchVenueSchedule', () => {
+  it('razvrsti termine po dnevu v tednu', async () => {
+    mockSnapshot([
+      { weekday: 3, startHHMM: '18:00' },
+      { weekday: 1, startHHMM: '18:00' },
     ]);
-
-    const uspeli = results.filter(r => r.status === 'fulfilled');
-    const zavrnjeni = results.filter(r => r.status === 'rejected');
-
-    expect(uspeli).toHaveLength(1);
-    expect(zavrnjeni).toHaveLength(2);
-    expect(mockStore.size).toBe(1);
+    const r = await fetchVenueSchedule('venue1');
+    expect(r.map(s => s.weekday)).toEqual([1, 3]);
   });
 
-  it('isti uporabnik ne more rezervirati istega termina dvakrat', async () => {
-    await createReservation({ ...BASE, bookedBy: 'userA' });
-
-    await expect(
-      createReservation({ ...BASE, bookedBy: 'userA' })
-    ).rejects.toThrow('Ta termin je že rezerviran. Izberi drug termin.');
+  it('termine istega dne razvrsti po uri', async () => {
+    mockSnapshot([
+      { weekday: 1, startHHMM: '20:00' },
+      { weekday: 1, startHHMM: '09:00' },
+    ]);
+    const r = await fetchVenueSchedule('venue1');
+    expect(r.map(s => s.startHHMM)).toEqual(['09:00', '20:00']);
   });
 
-  it('drug termin na istem igrišču se rezervira brez težav', async () => {
-    await createReservation({ ...BASE, startHHMM: '18:00', endHHMM: '19:00' });
-    await createReservation({ ...BASE, startHHMM: '19:00', endHHMM: '20:00' });
-
-    expect(mockStore.size).toBe(2);
+  it('vsakemu terminu pripiše igrišče', async () => {
+    mockSnapshot([{ weekday: 1, startHHMM: '18:00' }]);
+    const r = await fetchVenueSchedule('venue1');
+    expect(r[0].venueId).toBe('venue1');
   });
 
-  it('isti termin na drugem igrišču se rezervira brez težav', async () => {
-    await createReservation({ ...BASE, venueId: 'venue1' });
-    await createReservation({ ...BASE, venueId: 'venue2' });
-
-    expect(mockStore.size).toBe(2);
-  });
-
-  it('isti termin naslednji teden se rezervira brez težav', async () => {
-    await createReservation({ ...BASE, date: new Date(2026, 5, 15) });
-    await createReservation({ ...BASE, date: new Date(2026, 5, 22) });
-
-    expect(mockStore.size).toBe(2);
+  it('prazen urnik vrne prazen seznam', async () => {
+    mockSnapshot([]);
+    expect(await fetchVenueSchedule('venue1')).toEqual([]);
   });
 });
 
-describe('createReservation — preklican termin je spet prost', () => {
-  it('po preklicu lahko drug uporabnik rezervira isti termin', async () => {
-    const id = await createReservation({ ...BASE, bookedBy: 'userA' });
-    await cancelReservation(id);
+//fetchBookedSlots
 
-    await expect(
-      createReservation({ ...BASE, bookedBy: 'userB' })
-    ).resolves.toBe(id);
-
-    expect(mockStore.get(id).bookedBy).toBe('userB');
-    expect(mockStore.get(id).status).toBe('confirmed');
+describe('fetchBookedSlots', () => {
+  it('vrne zasedene termine za dani dan', async () => {
+    mockSnapshot([
+      { dateKey: '2026-06-15', startHHMM: '18:00', endHHMM: '19:00' },
+      { dateKey: '2026-06-15', startHHMM: '20:00', endHHMM: '21:00' },
+    ]);
+    expect(await fetchBookedSlots('venue1', new Date(2026, 5, 15))).toHaveLength(2);
   });
 
-  it('preklic nastavi status na cancelled', async () => {
-    const id = await createReservation(BASE);
-    await cancelReservation(id);
-    expect(mockStore.get(id).status).toBe('cancelled');
+  it('brez zasedenih terminov vrne prazen seznam', async () => {
+    mockSnapshot([]);
+    expect(await fetchBookedSlots('venue1', new Date(2026, 5, 15))).toEqual([]);
+  });
+
+  it('vsakemu zapisu ohrani identifikator', async () => {
+    mockSnapshot([{ id: 'b1', dateKey: '2026-06-15', startHHMM: '18:00', endHHMM: '19:00' }]);
+    const r = await fetchBookedSlots('venue1', new Date(2026, 5, 15));
+    expect(r[0].id).toBe('b1');
   });
 });
 
-describe('fetchReservationsForDate', () => {
-  function mockDocs(reservations: Partial<Reservation>[]) {
-    (getDocs as jest.Mock).mockResolvedValueOnce({
-      docs: reservations.map((r, i) => ({
-        id: r.id ?? `r${i}`,
-        data: () => r,
-      })),
-    });
-  }
+//fetchMyReservations
+
+describe('fetchMyReservations', () => {
+  const rez = (status: string, ms: number) => ({
+    status,
+    date: { toDate: () => new Date(ms) },
+  });
 
   it('preklicane rezervacije izpusti', async () => {
-    mockDocs([
-      { status: 'cancelled', date: { toDate: () => new Date(2026, 5, 15, 18) }, startHHMM: '18:00' },
-      { status: 'confirmed', date: { toDate: () => new Date(2026, 5, 15, 19) }, startHHMM: '19:00' },
-    ]);
-
-    const result = await fetchReservationsForDate('venue1', new Date(2026, 5, 15));
-    expect(result).toHaveLength(1);
-    expect(result[0].startHHMM).toBe('19:00');
+    mockSnapshot([rez('cancelled', 1000), rez('confirmed', 2000)]);
+    const r = await fetchMyReservations('user1');
+    expect(r).toHaveLength(1);
+    expect(r[0].status).toBe('confirmed');
   });
 
-  it('rezervacije z drugega dne izpusti', async () => {
-    mockDocs([
-      { status: 'confirmed', date: { toDate: () => new Date(2026, 5, 14, 18) }, startHHMM: '18:00' },
-      { status: 'confirmed', date: { toDate: () => new Date(2026, 5, 15, 18) }, startHHMM: '18:00' },
-      { status: 'confirmed', date: { toDate: () => new Date(2026, 5, 16, 18) }, startHHMM: '18:00' },
-    ]);
-
-    const result = await fetchReservationsForDate('venue1', new Date(2026, 5, 15));
-    expect(result).toHaveLength(1);
+  it('razvrsti od najstarejše proti najnovejši', async () => {
+    mockSnapshot([rez('confirmed', 3000), rez('confirmed', 1000)]);
+    const r = await fetchMyReservations('user1');
+    expect(r[0].date.toDate().getTime()).toBe(1000);
   });
 
-  it('rezervacijo ob 00:00 istega dne vključi (spodnja meja)', async () => {
-    mockDocs([
-      { status: 'confirmed', date: { toDate: () => new Date(2026, 5, 15, 0, 0, 0) }, startHHMM: '00:00' },
-    ]);
-
-    const result = await fetchReservationsForDate('venue1', new Date(2026, 5, 15));
-    expect(result).toHaveLength(1);
+  it('rezervacijo brez datuma obravnava kot najstarejšo', async () => {
+    mockSnapshot([rez('confirmed', 5000), { status: 'confirmed' }]);
+    const r = await fetchMyReservations('user1');
+    expect(r).toHaveLength(2);
   });
 
-  it('rezervacijo ob 23:59 istega dne vključi (zgornja meja)', async () => {
-    mockDocs([
-      { status: 'confirmed', date: { toDate: () => new Date(2026, 5, 15, 23, 59, 59) }, startHHMM: '23:00' },
-    ]);
-
-    const result = await fetchReservationsForDate('venue1', new Date(2026, 5, 15));
-    expect(result).toHaveLength(1);
+  it('brez rezervacij vrne prazen seznam', async () => {
+    mockSnapshot([]);
+    expect(await fetchMyReservations('user1')).toEqual([]);
   });
 
-  it('prazna kolekcija vrne prazen seznam', async () => {
-    mockDocs([]);
-    const result = await fetchReservationsForDate('venue1', new Date(2026, 5, 15));
-    expect(result).toEqual([]);
+  it('same preklicane rezervacije dajo prazen seznam', async () => {
+    mockSnapshot([rez('cancelled', 1000), rez('cancelled', 2000)]);
+    expect(await fetchMyReservations('user1')).toEqual([]);
+  });
+});
+
+//Pogodba proti Cloud Functions
+
+describe('createReservation — pogodba klica', () => {
+  const BASE = {
+    venueId: 'venue1',
+    date: new Date(2026, 5, 15),
+    startHHMM: '18:00',
+    endHHMM: '19:00',
+  };
+
+  it('datum pošlje kot ključ, ne kot objekt', async () => {
+    await createReservation(BASE);
+    expect(mockCallable.mock.calls[0][0]).toMatchObject({ dateKey: '2026-06-15' });
+  });
+
+  it('pošlje igrišče in oba časa', async () => {
+    await createReservation(BASE);
+    expect(mockCallable.mock.calls[0][0]).toMatchObject({
+      venueId: 'venue1',
+      startHHMM: '18:00',
+      endHHMM: '19:00',
+    });
+  });
+
+  it('brez tekme polja matchId ne pošlje', async () => {
+    await createReservation(BASE);
+    expect(mockCallable.mock.calls[0][0]).not.toHaveProperty('matchId');
+  });
+
+  it('s tekmo polje matchId pošlje', async () => {
+    await createReservation({ ...BASE, matchId: 'match1' });
+    expect(mockCallable.mock.calls[0][0]).toMatchObject({ matchId: 'match1' });
+  });
+
+  it('vrne odgovor strežnika nespremenjen', async () => {
+    const r = await createReservation(BASE);
+    expect(r).toEqual({ reservationId: 'rez-1', price: 30 });
+  });
+
+  it('napako strežnika posreduje naprej', async () => {
+    mockCallable.mockRejectedValueOnce(new Error('Termin je že rezerviran.'));
+    await expect(createReservation(BASE)).rejects.toThrow('Termin je že rezerviran.');
+  });
+});
+
+describe('cancelReservation in markReservationPaid', () => {
+  it('preklic pošlje identifikator rezervacije', async () => {
+    await cancelReservation('rez-1');
+    expect(mockCallable.mock.calls[0][0]).toEqual({ reservationId: 'rez-1' });
+  });
+
+  it('napako pri preklicu posreduje naprej', async () => {
+    mockCallable.mockRejectedValueOnce(new Error('Preklic ni mogoč.'));
+    await expect(cancelReservation('rez-1')).rejects.toThrow('Preklic ni mogoč.');
+  });
+
+  it('označitev plačila zapiše v dokument rezervacije', async () => {
+    await markReservationPaid('rez-1');
+    expect(updateDoc).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'rez-1' }),
+      { paid: true },
+    );
   });
 });
