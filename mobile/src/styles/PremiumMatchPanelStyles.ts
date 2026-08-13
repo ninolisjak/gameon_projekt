@@ -11,7 +11,6 @@ export const makeStyles = (colors: Colors) => StyleSheet.create({
 
   scoreSeparator: { color: colors.textFaint, fontSize: 32, fontWeight: '900', paddingHorizontal: 8 },
 
-  // Vnos končnega rezultata (kapetana oz. vsi igralci ob neujemanju)
   scorePanel: {
     backgroundColor: colors.bgElevated, borderRadius: 18, padding: 18, gap: 12,
     borderWidth: 1, borderColor: colors.primary,

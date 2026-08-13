@@ -5,8 +5,7 @@ import { useNavigation, useRoute } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { StatusBar } from 'react-native';
-import { createStripeCheckoutSession, markPlayerPayment } from '../services/matchService';
-import { markReservationPaid } from '../services/reservationService';
+import { createStripeCheckoutSession, confirmStripePayment } from '../services/matchService';
 import { useColors } from '../context/PremiumContext';
 
 type Params = {
@@ -16,6 +15,11 @@ type Params = {
   userId: string;
   description: string;
 };
+
+function extractSessionId(url: string): string | null {
+  const m = /[?&]session_id=([^&]+)/.exec(url);
+  return m ? decodeURIComponent(m[1]) : null;
+}
 
 const SUCCESS_PREFIX = 'https://gameon-app.invalid/payment-success';
 const CANCEL_PREFIX  = 'https://gameon-app.invalid/payment-cancel';
@@ -41,17 +45,19 @@ export default function PaymentWebViewScreen() {
       });
   }, []);
 
-  async function handleSuccess() {
+  async function handleSuccess(url: string) {
+    const sessionId = extractSessionId(url);
+    if (!sessionId) {
+      Alert.alert('Napaka', 'Plačila ni bilo mogoče potrditi (manjka ID seje).');
+      navigation.goBack();
+      return;
+    }
     setConfirming(true);
     try {
-      if (entityType === 'match') {
-        await markPlayerPayment(entityId, userId, 'paid');
-      } else {
-        await markReservationPaid(entityId);
-      }
+      await confirmStripePayment(sessionId);
       navigation.goBack();
-    } catch {
-      Alert.alert('Opozorilo', 'Plačilo je bilo uspešno, a stanja ni bilo mogoče posodobiti.');
+    } catch (e: any) {
+      Alert.alert('Plačilo ni potrjeno', String(e?.message ?? 'Poskusi znova.'));
       navigation.goBack();
     }
   }
@@ -104,7 +110,7 @@ export default function PaymentWebViewScreen() {
         source={{ uri: checkoutUrl! }}
         onShouldStartLoadWithRequest={req => {
           if (req.url.startsWith(SUCCESS_PREFIX)) {
-            handleSuccess();
+            handleSuccess(req.url);
             return false;
           }
           if (req.url.startsWith(CANCEL_PREFIX)) {

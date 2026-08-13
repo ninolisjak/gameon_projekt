@@ -1,5 +1,6 @@
-import { doc, getDoc, setDoc, Timestamp, arrayUnion } from 'firebase/firestore';
-import { db } from '../config/firebase';
+import { doc, setDoc, Timestamp } from 'firebase/firestore';
+import { httpsCallable } from 'firebase/functions';
+import { db, functions } from '../config/firebase';
 import { UserDoc } from './matchService';
 
 export type BadgeTier = 'bronze' | 'silver' | 'gold' | 'seasonal';
@@ -170,23 +171,12 @@ function isRealUid(uid: string): boolean {
 export async function syncBadges(uid: string): Promise<Badge[]> {
   if (!isRealUid(uid)) return [];
   try {
-    const ref = doc(db, 'users', uid);
-    const snap = await getDoc(ref);
-    if (!snap.exists()) return [];
-    const data = snap.data() as UserDoc;
-
-    const already = new Set(data.unlockedBadges ?? []);
-    const qualifies = computeUnlockedBadgeIds(statsFromUserDoc(data));
-    const newlyUnlocked = qualifies.filter(id => !already.has(id));
-    if (newlyUnlocked.length === 0) return [];
-
-    await setDoc(
-      ref,
-      { unlockedBadges: arrayUnion(...newlyUnlocked), updatedAt: Timestamp.now() },
-      { merge: true },
+    const fn = httpsCallable<unknown, { unlocked: string[]; newlyUnlocked: string[] }>(
+      functions,
+      'syncBadges',
     );
-
-    return newlyUnlocked
+    const res = await fn({});
+    return (res.data.newlyUnlocked ?? [])
       .map(id => BADGE_BY_ID.get(id))
       .filter((b): b is Badge => !!b);
   } catch (e) {

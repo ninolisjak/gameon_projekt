@@ -4,7 +4,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { auth } from '../config/firebase';
-import { joinMatch, leaveMatch, leaveWaitlist, subscribeMatch, resolveUserNames, Match, DEMO_USERS, requestMatchStart, respondToMatchStart, cancelMatchLowAttendance, acceptInvite, declineInvite } from '../services/matchService';
+import { joinMatch, leaveMatch, leaveWaitlist, subscribeMatch, resolveUserNames, Match, DEMO_USERS, requestMatchStart, respondToMatchStart, cancelMatchLowAttendance, acceptInvite, declineInvite, matchStartMillis } from '../services/matchService';
 import { showLocalNotification } from '../services/notificationService';
 import { makeStyles } from '../styles/MatchDetailsScreenStyles';
 import { useColors, usePremium } from '../context/PremiumContext';
@@ -33,6 +33,7 @@ export default function MatchDetailsScreen() {
   const [loading, setLoading] = React.useState(!initial);
   const [busy, setBusy] = React.useState(false);
   const [startBusy, setStartBusy] = React.useState(false);
+  const [nowTs, setNowTs] = React.useState(() => Date.now());
   const [userId, setUserId] = React.useState<string>(auth.currentUser?.uid ?? 'niko');
   const [userNames, setUserNames] = React.useState<Map<string, string>>(new Map());
 
@@ -54,12 +55,23 @@ export default function MatchDetailsScreen() {
 
   React.useEffect(() => {
     if (!match) return;
-    const uids = [...new Set([...(match.players ?? []), ...(match.waitlist ?? [])])];
+    const uids = [...new Set([
+      ...(match.players ?? []),
+      ...(match.waitlist ?? []),
+      ...(match.teamA ?? []),
+      ...(match.teamB ?? []),
+      ...Object.keys(match.pendingInvites ?? {}),
+    ])];
     if (uids.length === 0) return;
     resolveUserNames(uids).then(setUserNames);
-  }, [match?.players?.join(','), match?.waitlist?.join(',')]);
+  }, [
+    match?.players?.join(','),
+    match?.waitlist?.join(','),
+    match?.teamA?.join(','),
+    match?.teamB?.join(','),
+    Object.keys(match?.pendingInvites ?? {}).join(','),
+  ]);
 
-  
   React.useEffect(() => {
     if (!match?.id) return;
 
@@ -94,7 +106,6 @@ export default function MatchDetailsScreen() {
     prevStartRequestedRef.current = cur;
   }, [match?.startRequested, match?.matchStarted, userId]);
 
- 
   React.useEffect(() => {
     if (!match) return;
     const cur = !!match.matchStarted;
@@ -105,7 +116,6 @@ export default function MatchDetailsScreen() {
     prevMatchStartedRef.current = cur;
   }, [match?.matchStarted]);
 
-  
   React.useEffect(() => {
     if (!match) return;
     const cur = match.status === 'closed' && match.cancelReason === 'low_attendance';
@@ -232,6 +242,28 @@ export default function MatchDetailsScreen() {
       Alert.alert('Napaka', e.message ?? 'Odstranitev ni uspela.');
     } finally { setBusy(false); }
   }
+
+  const startAt = match ? matchStartMillis(match) : null;
+  const startAllowed = startAt === null ? true : nowTs >= startAt;
+
+  React.useEffect(() => {
+    if (startAt === null || startAllowed) return;
+    const id = setInterval(() => setNowTs(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, [startAt, startAllowed]);
+
+  const countdownLabel = React.useMemo(() => {
+    if (startAt === null) return '';
+    const left = Math.max(0, startAt - nowTs);
+    const totalMin = Math.floor(left / 60000);
+    const sec = Math.floor((left % 60000) / 1000);
+    if (totalMin >= 60) {
+      const h = Math.floor(totalMin / 60);
+      return `${h} h ${totalMin % 60} min`;
+    }
+    if (totalMin > 0) return `${totalMin} min ${sec} s`;
+    return `${sec} s`;
+  }, [startAt, nowTs]);
 
   if (loading || !match) {
     return (
@@ -562,6 +594,13 @@ export default function MatchDetailsScreen() {
                 <Text style={styles.fullBtnText}>Čakam na soglasje ostalih...</Text>
               </View>
             )
+          ) : !startAllowed ? (
+            <View style={[styles.fullBtn, { flexDirection: 'row', gap: 8, borderColor: colors.borderSubtle }]}>
+              <Ionicons name="time-outline" size={18} color={colors.textMuted} />
+              <Text style={[styles.fullBtnText, { color: colors.textMuted }]}>
+                Začetek ob {formatTime(match.datetime)} · čez {countdownLabel}
+              </Text>
+            </View>
           ) : (
             <TouchableOpacity style={styles.startBtn} onPress={handleStartMatch} disabled={startBusy} activeOpacity={0.9}>
               {startBusy ? <ActivityIndicator color="#fff" /> : (

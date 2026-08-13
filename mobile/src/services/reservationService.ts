@@ -1,8 +1,6 @@
-import {
-  collection, query, where, getDocs,
-  runTransaction, doc, Timestamp, updateDoc,
-} from 'firebase/firestore';
-import { db } from '../config/firebase';
+import { collection, query, where, getDocs, doc, updateDoc } from 'firebase/firestore';
+import { httpsCallable } from 'firebase/functions';
+import { db, functions } from '../config/firebase';
 
 export type ScheduleSlot = {
   id: string;
@@ -40,22 +38,25 @@ export type Reservation = {
   createdAt?: any;
 };
 
-/**
- * Sestavi determinističen ID rezervacije iz igrišča, datuma in začetne ure.
- *
- * Ključno za preprečevanje dvojnih rezervacij: ker je ID vnaprej znan,
- * lahko transakcija bere natanko ta dokument prek tx.get(). Firestore
- * transakcije ne podpirajo poizvedb, podpirajo pa branje dokumenta po
- * referenci — in prav to branje vključijo v nadzor sočasnosti.
- *
- * Primer: "abc123_2026-06-15_1800"
- */
-export function buildReservationId(venueId: string, date: Date, startHHMM: string): string {
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, '0');
-  const day = String(date.getDate()).padStart(2, '0');
-  const time = startHHMM.replace(':', '');
-  return `${venueId}_${year}-${month}-${day}_${time}`;
+export function hhmmToMinutes(hhmm: string): number {
+  const m = /^(\d{1,2}):(\d{2})$/.exec(hhmm ?? '');
+  if (!m) return NaN;
+  const h = Number(m[1]);
+  const min = Number(m[2]);
+  if (h > 23 || min > 59) return NaN;
+  return h * 60 + min;
+}
+
+export function rangesOverlap(
+  startA: string, endA: string,
+  startB: string, endB: string,
+): boolean {
+  const aS = hhmmToMinutes(startA);
+  const aE = hhmmToMinutes(endA);
+  const bS = hhmmToMinutes(startB);
+  const bE = hhmmToMinutes(endB);
+  if ([aS, aE, bS, bE].some(Number.isNaN)) return false;
+  return aS < bE && bS < aE;
 }
 
 export async function fetchActiveVenues(sport?: 'futsal' | 'basketball'): Promise<Venue[]> {
@@ -77,90 +78,58 @@ export async function fetchVenueSchedule(venueId: string): Promise<ScheduleSlot[
     .sort((a, b) => a.weekday - b.weekday || a.startHHMM.localeCompare(b.startHHMM));
 }
 
-/**
- * Vrne nepreklicane rezervacije igrišča za dani dan.
- *
- * Poizvedba filtrira samo po venueId. Statusa namenoma ne filtriramo v
- * poizvedbi: Firestore pri operatorju "!=" izpusti dokumente, ki polja
- * sploh nimajo, zato bi rezervacija brez polja "status" izginila iz
- * rezultata in bi termin izgledal prost. Filtriranje v kodi je varnejše
- * in hkrati odpravi potrebo po sestavljenem indeksu.
- */
-export async function fetchReservationsForDate(
-  venueId: string,
-  date: Date,
-): Promise<Reservation[]> {
-  const q = query(
-    collection(db, 'reservations'),
-    where('venueId', '==', venueId),
-  );
-  const snap = await getDocs(q);
-
-  const startOfDay = new Date(date);
-  startOfDay.setHours(0, 0, 0, 0);
-  const endOfDay = new Date(date);
-  endOfDay.setHours(23, 59, 59, 999);
-
-  return snap.docs
-    .map(d => ({ ...d.data(), id: d.id } as Reservation))
-    .filter(r => r.status !== 'cancelled')
-    .filter(r => {
-      const rd = r.date?.toDate ? r.date.toDate() : new Date(r.date);
-      return rd >= startOfDay && rd <= endOfDay;
-    });
+export function toDateKey(date: Date): string {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, '0');
+  const d = String(date.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
 }
 
-/**
- * Ustvari rezervacijo in atomarno prepreči dvojno rezervacijo istega termina.
- *
- * Zakaj determinističen ID namesto poizvedbe po konfliktih:
- * Firestore transakcije podpirajo izključno tx.get(documentRef). Klic
- * getDocs() znotraj runTransaction se izvede kot navadno branje zunaj
- * transakcije, zato ga nadzor sočasnosti ne zajame — dva hkratna klica
- * bi oba prebrala "ni konflikta" in oba zapisala.
- *
- * Z determinističnim ID-jem transakcija prebere natanko tisti dokument,
- * ki ga namerava zapisati. Če ga med izvajanjem kdo drug ustvari,
- * Firestore transakcijo ponovi; ob ponovitvi dokument obstaja in
- * funkcija vrne napako.
- */
+export function buildReservationId(venueId: string, date: Date, startHHMM: string): string {
+  return `${venueId}_${toDateKey(date)}_${startHHMM.replace(':', '')}`;
+}
+
+export type BookedSlot = {
+  id: string;
+  dateKey: string;
+  startHHMM: string;
+  endHHMM: string;
+};
+
+export async function fetchBookedSlots(venueId: string, date: Date): Promise<BookedSlot[]> {
+  const q = query(
+    collection(db, 'venues', venueId, 'booked'),
+    where('dateKey', '==', toDateKey(date)),
+  );
+  const snap = await getDocs(q);
+  return snap.docs.map(d => ({ ...(d.data() as Omit<BookedSlot, 'id'>), id: d.id }));
+}
+
 export async function createReservation(data: {
   venueId: string;
-  ownerId: string;
-  bookedBy: string;
-  matchId?: string;
   date: Date;
   startHHMM: string;
   endHHMM: string;
-  price: number;
-}): Promise<string> {
-  const reservationId = buildReservationId(data.venueId, data.date, data.startHHMM);
-  const reservationRef = doc(db, 'reservations', reservationId);
-
-  await runTransaction(db, async tx => {
-    const snap = await tx.get(reservationRef);
-
-    if (snap.exists()) {
-      const existing = snap.data() as Reservation;
-      if (existing.status !== 'cancelled') {
-        throw new Error('Ta termin je že rezerviran. Izberi drug termin.');
-      }
-    }
-
-    tx.set(reservationRef, {
-      ...data,
-      date: Timestamp.fromDate(data.date),
-      status: 'confirmed',
-      paid: false,
-      createdAt: Timestamp.now(),
-    });
-  });
-
-  return reservationId;
+  matchId?: string;
+}): Promise<{ reservationId: string; price: number }> {
+  const fn = httpsCallable<unknown, { reservationId: string; price: number }>(
+    functions,
+    'createReservation',
+  );
+  const payload: Record<string, unknown> = {
+    venueId: data.venueId,
+    dateKey: toDateKey(data.date),
+    startHHMM: data.startHHMM,
+    endHHMM: data.endHHMM,
+  };
+  if (typeof data.matchId === 'string') payload.matchId = data.matchId;
+  const res = await fn(payload);
+  return res.data;
 }
 
 export async function cancelReservation(reservationId: string): Promise<void> {
-  await updateDoc(doc(db, 'reservations', reservationId), { status: 'cancelled' });
+  const fn = httpsCallable(functions, 'cancelReservation');
+  await fn({ reservationId });
 }
 
 export async function markReservationPaid(reservationId: string): Promise<void> {

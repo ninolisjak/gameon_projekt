@@ -166,7 +166,6 @@ export type JoinResult =
   | { status: 'joined' }
   | { status: 'waitlisted'; position: number };
 
-
 export const STARTING_ELO = 700;
 export const STARTING_REPUTATION = 50;
 const LATE_CANCEL_WINDOW_MS = 2 * 60 * 60 * 1000;
@@ -615,7 +614,6 @@ export async function swapTeam(matchId: string, userId: string, requesterId: str
   });
 }
 
-
 export async function checkIn(matchId: string, userId: string) {
   const ref = doc(db, 'matches', matchId);
   await updateDoc(ref, { attended: arrayUnion(userId) });
@@ -630,9 +628,6 @@ export async function submitMatchScore(
   const res = await fn({ matchId, scoreA, scoreB });
   return res.data as SubmitScoreResult;
 }
-
-
-
 
 export async function setMatchRentalCost(matchId: string, cost: number, creatorId: string) {
   const ref = doc(db, 'matches', matchId);
@@ -796,7 +791,6 @@ export async function declineInvite(matchId: string, userId: string): Promise<vo
   });
 }
 
-
 async function fetchBalanceInputs(uids: string[]): Promise<BalanceInput[]> {
   const inputs = await Promise.all(uids.map(async uid => {
     if (uid.length <= 10) {
@@ -869,6 +863,20 @@ async function maybeAutoBalance(matchId: string): Promise<void> {
   }
 }
 
+export const AUTO_START_DELAY_MS = 5 * 60 * 1000;
+
+export function matchStartMillis(match: Pick<Match, 'datetime'>): number | null {
+  const raw: any = match?.datetime;
+  if (!raw) return null;
+  const d = raw?.toDate ? raw.toDate() : new Date(raw);
+  const ms = d.getTime();
+  return Number.isNaN(ms) ? null : ms;
+}
+
+export function canStartMatch(match: Pick<Match, 'datetime'>, now: number = Date.now()): boolean {
+  const start = matchStartMillis(match);
+  return start === null ? true : now >= start;
+}
 
 export async function requestMatchStart(matchId: string, creatorId: string): Promise<string[]> {
   const ref = doc(db, 'matches', matchId);
@@ -879,6 +887,7 @@ export async function requestMatchStart(matchId: string, creatorId: string): Pro
     if (data.createdBy !== creatorId) throw new Error('Samo gostitelj lahko začne tekmo.');
     if (data.matchStarted) throw new Error('Tekma je že začeta.');
     if (data.startRequested) throw new Error('Začetek je že bil zahtevan.');
+    if (!canStartMatch(data)) throw new Error('Tekme še ni mogoče začeti — počakaj na predviden termin.');
 
     const players = data.players ?? [];
     const consent: Record<string, 'yes' | 'no' | 'pending'> = {};
@@ -1121,8 +1130,12 @@ export async function createStripeCheckoutSession(
   userId: string,
   description: string,
 ): Promise<string> {
-  const idToken = await auth.currentUser?.getIdToken(true) ?? null;
-  const fn = httpsCallable<unknown, { url: string }>(functions, 'createCheckoutSession');
-  const result = await fn({ amount, entityType, entityId, userId, description, idToken });
+  const fn = httpsCallable<unknown, { url: string; sessionId: string }>(functions, 'createCheckoutSession');
+  const result = await fn({ amount, entityType, entityId, description });
   return result.data.url;
+}
+
+export async function confirmStripePayment(sessionId: string): Promise<void> {
+  const fn = httpsCallable<unknown, { ok: boolean }>(functions, 'confirmPayment');
+  await fn({ sessionId });
 }

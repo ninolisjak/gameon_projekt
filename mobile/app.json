@@ -18,10 +18,17 @@
     },
     "android": {
       "package": "com.RISacc.gameontest",
-      "adaptiveIcon": { "foregroundImage": "./assets/adaptive-icon.png", "backgroundColor": "#ffffff" },
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#ffffff"
+      },
       "edgeToEdgeEnabled": true,
       "predictiveBackGestureEnabled": false,
-      "config": { "googleMaps": { "apiKey": "AIzaSyD7CpjZYP8qrm91cE5W1R7cef8pJo0UJhc" } }
+      "config": {
+        "googleMaps": {
+          "apiKey": "AIzaSyD7CpjZYP8qrm91cE5W1R7cef8pJo0UJhc"
+        }
+      }
     },
     "web": {
       "favicon": "./assets/favicon.png"
@@ -45,7 +52,8 @@
         {
           "photosPermission": "GameOn potrebuje dostop do fotografij za pošiljanje slik v chatu."
         }
-      ]
+      ],
+      "expo-font"
     ],
     "extra": {
       "eas": {

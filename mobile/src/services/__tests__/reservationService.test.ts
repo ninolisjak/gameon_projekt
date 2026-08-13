@@ -1,9 +1,7 @@
 jest.mock('../../config/firebase', () => ({ db: {} }));
 
-// Skupna shramba, ki jo mock transakcije bere in piše.
 const mockStore = new Map<string, any>();
 const mockVersions = new Map<string, number>();
-
 
 jest.mock('firebase/firestore', () => ({
   collection: jest.fn((_db: any, ...path: string[]) => ({ path: path.join('/') })),
@@ -49,7 +47,6 @@ runTransaction: jest.fn(async (_db: any, updateFn: any) => {
 
       const result = await updateFn(tx);
 
-      // Potrditev: če se je katerikoli prebrani dokument medtem spremenil, transakcijo zavržemo in jo poženemo znova.
       let conflict = false;
       for (const [id, versionAtRead] of readVersions) {
         if ((mockVersions.get(id) ?? 0) !== versionAtRead) {
@@ -105,7 +102,6 @@ beforeEach(() => {
   mockVersions.clear();
 });
 
-// deterministični ključ (ID) rezervacije
 describe('buildReservationId', () => {
   it('isti vhodi dajo vedno isti ID', () => {
     const a = buildReservationId('venue1', new Date(2026, 5, 15), '18:00');
@@ -147,8 +143,6 @@ describe('buildReservationId', () => {
   });
 });
 
-
-// osnovni tok ustvarjanja rezervacije
 describe('createReservation — osnovni tok', () => {
   it('prosti termin se uspešno rezervira', async () => {
     const id = await createReservation(BASE);
@@ -172,7 +166,6 @@ describe('createReservation — osnovni tok', () => {
   });
 });
 
-// osrednji del preprečevanja dvojnih rezervacij
 describe('createReservation — preprečevanje dvojnih rezervacij', () => {
   it('drugi uporabnik na istem terminu dobi napako', async () => {
     await createReservation({ ...BASE, bookedBy: 'userA' });
@@ -244,7 +237,6 @@ describe('createReservation — preprečevanje dvojnih rezervacij', () => {
   });
 });
 
-// da priklic sprosti termin in omogoči drugim da ga rezervirajo
 describe('createReservation — preklican termin je spet prost', () => {
   it('po preklicu lahko drug uporabnik rezervira isti termin', async () => {
     const id = await createReservation({ ...BASE, bookedBy: 'userA' });
@@ -265,7 +257,6 @@ describe('createReservation — preklican termin je spet prost', () => {
   });
 });
 
-// pridobivanje rezervacij za datum - filtriranje 
 describe('fetchReservationsForDate', () => {
   function mockDocs(reservations: Partial<Reservation>[]) {
     (getDocs as jest.Mock).mockResolvedValueOnce({

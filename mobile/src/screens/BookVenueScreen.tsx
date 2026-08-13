@@ -8,7 +8,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
 import { auth } from '../config/firebase';
 import {
-  fetchActiveVenues, fetchVenueSchedule, fetchReservationsForDate,
+  fetchActiveVenues, fetchVenueSchedule, fetchBookedSlots, toDateKey, BookedSlot,
   createReservation, Venue, ScheduleSlot, Reservation,
 } from '../services/reservationService';
 import {
@@ -55,7 +55,7 @@ export default function BookVenueScreen() {
   const [venues, setVenues] = React.useState<Venue[]>([]);
   const [selectedVenue, setSelectedVenue] = React.useState<Venue | null>(null);
   const [schedule, setSchedule] = React.useState<ScheduleSlot[]>([]);
-  const [reservations, setReservations] = React.useState<Reservation[]>([]);
+  const [reservations, setReservations] = React.useState<BookedSlot[]>([]);
   const [selectedSlot, setSelectedSlot] = React.useState<ScheduleSlot | null>(null);
   const [selectedDate, setSelectedDate] = React.useState<Date | null>(null);
   const [weather, setWeather] = React.useState<WeatherData | null>(null);
@@ -89,11 +89,11 @@ export default function BookVenueScreen() {
       ]);
       setSchedule(slots);
       const weekdays = [...new Set(slots.map(s => s.weekday))];
-      const allReservations: Reservation[] = [];
+      const allReservations: BookedSlot[] = [];
       await Promise.all(
         weekdays.map(async wd => {
           const date = getNextDateForWeekday(wd);
-          const res = await fetchReservationsForDate(venue.id, date);
+          const res = await fetchBookedSlots(venue.id, date);
           allReservations.push(...res);
         })
       );
@@ -113,7 +113,7 @@ export default function BookVenueScreen() {
     setWeather(null);
     setLoading(true);
     try {
-      const existing = await fetchReservationsForDate(slot.venueId, date);
+      const existing = await fetchBookedSlots(slot.venueId, date);
       setReservations(existing);
       setStep('confirm');
       
@@ -137,12 +137,8 @@ export default function BookVenueScreen() {
   }
 
   const isSlotTaken = (slot: ScheduleSlot): boolean => {
-    const slotDate = getNextDateForWeekday(slot.weekday);
-    const slotDateStr = slotDate.toDateString();
-    return reservations.some(r => {
-      const rd = r.date?.toDate ? r.date.toDate() : new Date(r.date as any);
-      return r.startHHMM === slot.startHHMM && rd.toDateString() === slotDateStr;
-    });
+    const dateKey = toDateKey(getNextDateForWeekday(slot.weekday));
+    return reservations.some(r => r.dateKey === dateKey && r.startHHMM === slot.startHHMM);
   };
    
 
@@ -150,16 +146,13 @@ export default function BookVenueScreen() {
     if (!selectedVenue || !selectedSlot || !selectedDate) return;
     setBooking(true);
     try {
-      const id = await createReservation({
+      const res = await createReservation({
         venueId: selectedVenue.id,
-        ownerId: selectedVenue.ownerId,
-        bookedBy: userId,
         date: selectedDate,
         startHHMM: selectedSlot.startHHMM,
         endHHMM: selectedSlot.endHHMM,
-        price: selectedSlot.pricePerSlot,
       });
-      setReservationId(id);
+      setReservationId(res.reservationId);
       setBooked(true);
     } catch (e: any) {
       Alert.alert('Napaka', e.message);

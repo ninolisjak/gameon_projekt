@@ -3,8 +3,7 @@ import { Modal, View, Text, TouchableOpacity, ActivityIndicator, Alert, StatusBa
 import { WebView } from 'react-native-webview';
 import { Ionicons } from '@expo/vector-icons';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { createStripeCheckoutSession, markPlayerPayment } from '../services/matchService';
-import { markReservationPaid } from '../services/reservationService';
+import { createStripeCheckoutSession, confirmStripePayment } from '../services/matchService';
 import { useColors } from '../context/PremiumContext';
 
 type Props = {
@@ -17,6 +16,11 @@ type Props = {
   onClose: () => void;
   onSuccess: () => void;
 };
+
+function extractSessionId(url: string): string | null {
+  const m = /[?&]session_id=([^&]+)/.exec(url);
+  return m ? decodeURIComponent(m[1]) : null;
+}
 
 const SUCCESS_PREFIX = 'https://gameon-app.invalid/payment-success';
 const CANCEL_PREFIX  = 'https://gameon-app.invalid/payment-cancel';
@@ -37,13 +41,21 @@ export default function PaymentWebViewModal({ visible, amount, entityType, entit
       .catch((e: any) => { Alert.alert('Napaka', String(e?.message ?? e)); onClose(); });
   }, [visible]);
 
-  async function handleSuccess() {
+  async function handleSuccess(url: string) {
+    const sessionId = extractSessionId(url);
+    if (!sessionId) {
+      Alert.alert('Napaka', 'Plačila ni bilo mogoče potrditi (manjka ID seje).');
+      onClose();
+      return;
+    }
     setConfirming(true);
     try {
-      if (entityType === 'match') { await markPlayerPayment(entityId, userId, 'paid'); }
-      else { await markReservationPaid(entityId); }
+      await confirmStripePayment(sessionId);
       onSuccess();
-    } catch { Alert.alert('Opozorilo', 'Plačilo uspešno, posodobitev ni uspela.'); onSuccess(); }
+    } catch (e: any) {
+      Alert.alert('Plačilo ni potrjeno', String(e?.message ?? 'Poskusi znova.'));
+      onClose();
+    }
   }
 
   return (
@@ -73,12 +85,12 @@ export default function PaymentWebViewModal({ visible, amount, entityType, entit
           <WebView
             source={{ uri: checkoutUrl }}
             onShouldStartLoadWithRequest={req => {
-              if (req.url.startsWith(SUCCESS_PREFIX)) { handleSuccess(); return false; }
+              if (req.url.startsWith(SUCCESS_PREFIX)) { handleSuccess(req.url); return false; }
               if (req.url.startsWith(CANCEL_PREFIX)) { onClose(); return false; }
               return true;
             }}
             onNavigationStateChange={nav => {
-              if (nav.url.startsWith(SUCCESS_PREFIX)) handleSuccess();
+              if (nav.url.startsWith(SUCCESS_PREFIX)) handleSuccess(nav.url);
               else if (nav.url.startsWith(CANCEL_PREFIX)) onClose();
             }}
             startInLoadingState
