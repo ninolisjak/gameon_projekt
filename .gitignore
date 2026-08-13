@@ -25,3 +25,8 @@ build/
 # OS
 .DS_Store
 Thumbs.db
+
+# Visual Paradigm
+*.lck
+.*.lck
+*.bak_*

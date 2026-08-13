@@ -18,8 +18,12 @@ export async function listReservationsForOwner(ownerId: string): Promise<Reserva
   return sortByDate(snap.docs.map(d => ({ ...(d.data() as Reservation), id: d.id })));
 }
 
-export async function listReservationsForVenue(venueId: string): Promise<Reservation[]> {
-  const q = query(collection(db, 'reservations'), where('venueId', '==', venueId));
+export async function listReservationsForVenue(venueId: string, ownerId: string): Promise<Reservation[]> {
+  const q = query(
+    collection(db, 'reservations'),
+    where('venueId', '==', venueId),
+    where('ownerId', '==', ownerId),
+  );
   const snap = await getDocs(q);
   return sortByDate(snap.docs.map(d => ({ ...(d.data() as Reservation), id: d.id })));
 }

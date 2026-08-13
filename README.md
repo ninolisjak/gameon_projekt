@@ -154,7 +154,7 @@ Firebase Hosting v diagramu ni narisan kot povezava, ker ne gre za klic med plas
 | Leaflet | — | Interaktivni zemljevid | Odprtokoden, brez ključa in stroška — za izbiro lokacije objekta zadošča |
 | Firebase SDK | 11.1.0 | Zaledna integracija | Ista baza kot mobilna aplikacija |
 
-### Backend
+### Zaledje
 
 | Tehnologija | Namen | Zakaj ta izbira |
 |---|---|---|
@@ -315,10 +315,20 @@ erDiagram
         string bookedBy FK
         string matchId FK
         timestamp date
+        string dateKey
         string startHHMM
         string endHHMM
         number price
         string status
+        boolean paid
+    }
+
+    BOOKED {
+        string id PK
+        string dateKey
+        timestamp date
+        string startHHMM
+        string endHHMM
     }
 
     USERS ||--o{ MATCH_HISTORY : "podkolekcija"
@@ -332,6 +342,8 @@ erDiagram
     USERS ||--o{ VENUES : "upravlja"
     VENUES ||--o{ SCHEDULE : "podkolekcija"
     VENUES ||--o{ RESERVATIONS : "sprejema"
+    VENUES ||--o{ BOOKED : "javna zasedenost"
+    RESERVATIONS ||--|| BOOKED : "isti id"
     USERS ||--o{ RESERVATIONS : "rezervira"
     MATCHES ||--o| RESERVATIONS : "povzroči"
 ```
@@ -355,7 +367,8 @@ Enako velja za **soglasje o rezultatu**: `scoreSubmissions` je preslikava `uid �
 | `slots/{id}` | Posamezen termin skupine z RSVP odgovori | Člani skupine |
 | `venues/{id}` | Športni objekt | Lastnik objekta |
 | `venues/{id}/schedule/{id}` | Tedenski urnik in cenik objekta | Lastnik objekta |
-| `reservations/{id}` | Rezervacija termina | Mobilna aplikacija ustvari; lastnik in rezervator posodabljata |
+| `reservations/{id}` | Rezervacija termina: kdo, cena, plačilo | samo Cloud Function; odjemalec spremeni le `paid` |
+| `venues/{id}/booked/{id}` | Javna zasedenost termina — samo datum in ura, brez identitete | samo Cloud Function |
 
 > **Opozorilo.** Kolekciji `groups` in `slots` sta v uporabi, a zanju v `firestore.rules` **ni zapisanega pravila**. Firestore privzeto zavrne vse, kar ni izrecno dovoljeno, zato ponavljajoče se skupine v produkciji ne delujejo. Podrobneje v razdelku [Varnostna pravila](#varnostna-pravila).
 
@@ -439,8 +452,17 @@ classDiagram
         +string ownerId
         +string bookedBy
         +string matchId
+        +string dateKey
         +number price
         +ReservationStatus status
+        +boolean paid
+    }
+
+    class BookedSlot {
+        +string id
+        +string dateKey
+        +string startHHMM
+        +string endHHMM
     }
 
     class MatchService {
@@ -457,7 +479,12 @@ classDiagram
         <<strežnik>>
         +assignCaptains(change) void
         +submitMatchScore(data, context) SubmitScoreResult
+        +autoStartMatches() void
+        +syncBadges(data, context) Badge[]
+        +createReservation(data, context) ReservationResult
+        +cancelReservation(data, context) void
         +createCheckoutSession(data) Session
+        +confirmPayment(data, context) void
     }
 
     class TeamBalancer {
@@ -494,6 +521,9 @@ classDiagram
     Match "1" --> "0..1" Reservation
     Venue "1" --> "*" ScheduleSlot
     Venue "1" --> "*" Reservation
+    Venue "1" --> "*" BookedSlot
+    CloudFunctions --> Reservation : admin SDK
+    CloudFunctions --> BookedSlot : admin SDK
     UserDoc "1" --> "*" Match : ustvari
 ```
 
@@ -638,6 +668,48 @@ sequenceDiagram
 
 Rezultat je `balanceScore` — ocena od 0 do 100, ki upošteva razliko povprečnega ELO in pokritost igralnih pozicij. Postopek teče v odjemalcu, ker gre le za predlog razporeditve: gostitelj ga lahko ročno popravi, dokler se tekma ne začne. Po začetku tekme je menjava ekip onemogočena, sicer bi lahko kapetan po določitvi prestopil v drugo ekipo.
 
+### Rezervacija igrišča
+
+```mermaid
+sequenceDiagram
+    participant U as Igralec
+    participant App as Mobilna aplikacija
+    participant CF as Cloud Function<br/>createReservation
+    participant FS as Firestore
+
+    App->>FS: Bere venues/{id}/booked za izbrani dan
+    FS-->>App: zasedeni termini (samo ura, brez imen)
+    App-->>U: Prikaz prostih terminov
+
+    U->>App: Izbere termin in potrdi
+    App->>CF: createReservation(venueId, dateKey, od, do)
+
+    CF->>FS: Bere igrišče in urnik
+    FS-->>CF: ownerId, pricePerSlot
+
+    alt Termin ni v urniku
+        CF-->>App: failed-precondition
+    else Termin obstaja
+        CF->>FS: Transakcija: prebere zasedene termine dneva
+        alt Prekrivanje z obstoječo rezervacijo
+            CF-->>App: already-exists
+        else Prosto
+            CF->>FS: zapiše reservations/{id} — zasebno
+            CF->>FS: zapiše venues/{id}/booked/{id} — javno
+            CF-->>App: reservationId, cena
+            App-->>U: "Termin rezerviran"
+        end
+    end
+```
+
+**Kaj se dogaja.** Rezervacija ne nastane v telefonu. Aplikacija pošlje samo igrišče, datum in uro — **ceno določi strežnik** iz urnika igrišča, `bookedBy` pa vzame iz preverjenega žetona. Brez tega bi bilo mogoče termin za 40 € plačati za 1 € ali rezervirati v tujem imenu.
+
+Nastaneta dva zapisa. `reservations/{id}` je zasebna in vsebuje, kdo je rezerviral in po kakšni ceni — bereta jo samo rezervator in lastnik igrišča. `venues/{id}/booked/{id}` je javna in vsebuje samo datum in uro, brez identitete; iz nje aplikacija izriše zasedenost, ne da bi razkrila, kdo je termin zasedel. Oba zapisa nastaneta v isti transakciji, zato ne moreta zaiti narazen.
+
+Preverjanje prekrivanja teče **znotraj transakcije**. To je mogoče šele na strežniku: odjemalčev SDK znotraj transakcije ne dovoli poizvedb, strežniški Admin SDK pa jih, zato funkcija zares atomarno prebere vse zasedene termine tistega dne. Prej je bilo preverjanje zunaj transakcije in dve hkratni rezervaciji sta lahko obe uspeli.
+
+Odpoved teče prek `cancelReservation`, ki rezervacijo označi kot preklicano in hkrati izbriše javni zapis, s čimer termin spet postane prost.
+
 ---
 
 ## Navigacijska struktura
@@ -753,7 +825,29 @@ Vsaka tekma ima lasten chat kanal v realnem času (Firestore `onSnapshot`):
 - Slike (nalaganje v Firebase Storage)
 - GIF-i (Giphy API integracija)
 
-### 6. Integracija s Stripe
+### 6. Začetek tekme ob predvidenem terminu
+
+Tekme ni mogoče začeti prej, kot je dogovorjeno, in se ne more zatakniti, če je nihče ne zažene.
+
+| Trenutek | Kaj se zgodi |
+|---|---|
+| pred terminom | Gumb *Začni tekmo* je zaklenjen, prikazuje odštevanje do začetka |
+| ob terminu | Gostitelj lahko sproži začetek; igralci potrdijo soglasje |
+| termin + 5 min | Če tekma še ni začeta, jo strežnik zažene samodejno |
+
+Omejitev je vsiljena na treh mestih, ker vsako samo zase ne zadošča:
+
+1. **Vmesnik** — gumb je do termina zaklenjen (`canStartMatch()`), da uporabnik ne naleti na napako.
+2. **Varnostna pravila** — `startTimeOk()` zavrne vsak zapis polj `startRequested` ali `matchStarted` pred `datetime`. To velja tudi za gostitelja in tudi za spremenjen odjemalec.
+3. **Načrtovana Cloud Function** `autoStartMatches` — teče vsako minuto in zažene tekme, ki so 5 minut čez termin in še niso začete, končane ali odpovedane.
+
+**Zakaj samodejni zagon na strežniku in ne časovnik v aplikaciji.** Časovnik teče samo, dokler ima kdo odprt zaslon tekme. Če vsi zaprejo aplikacijo, se tekma ne bi nikoli začela, kapetana ne bi bila določena in rezultata ne bi bilo mogoče vnesti — tekma bi obtičala. Načrtovana funkcija je od odjemalcev neodvisna.
+
+Poizvedba je omejena na zadnjih 24 ur (`datetime` med *zdaj − 24 h* in *zdaj − 5 min*), sicer bi z rastjo baze pregledovala vse pretekle tekme. Samodejno začete tekme dobijo oznaki `autoStarted` in `autoStartedAt`, tako da je v podatkih razvidno, ali je tekmo zagnal človek ali sistem.
+
+Samodejni zagon preskoči soglasje igralcev — če se v petih minutah nihče ne odzove, je pomembneje, da tekma steče, kot da vsi potrdijo.
+
+### 7. Integracija s Stripe
 
 Plačila za rezervacije dvorane tečejo prek **Stripe Checkout**:
 1. Cloud Function ustvari Stripe Checkout Session
@@ -972,8 +1066,9 @@ Vloge niso zapisane kot polje v bazi (razen `role` pri lastnikih objektov) — i
 | `matches/{id}/messages/{id}` | samo igralci te tekme | samo igralci te tekme, `senderId` mora ustrezati prijavljenemu |
 | `venues/{id}` | javno | samo lastnik objekta |
 | `venues/{id}/schedule/{id}` | javno | samo lastnik objekta |
-| `reservations/{id}` | rezervator ali lastnik | ustvari vsak prijavljen; posodobi rezervator ali lastnik |
-| `groups`, `slots` | **ni pravila — vse zavrnjeno** | **ni pravila — vse zavrnjeno** |
+| `reservations/{id}` | rezervator ali lastnik igrišča | samo Cloud Function; odjemalec sme spremeniti le `paid` |
+| `venues/{id}/booked/{id}` | javno | samo Cloud Function |
+
 
 ### Zaklep rezultata tekme
 
@@ -987,27 +1082,9 @@ allow update: if request.auth != null
                 'scoreSubmissions', 'scorePhase', 'scoreDisputed']);
 ```
 
-Odjemalec sme spreminjati dokument tekme (prijave, ekipi, prisotnost), ne sme pa se dotakniti nobenega od naštetih polj. Ta smejo nastati samo prek Cloud Functions `submitMatchScore` in `assignCaptains`, ki uporabljata admin SDK in zato varnostna pravila obideta. Brez tega zaklepa bi zadostoval spremenjen odjemalec, ki bi zapisal `finalized: true` s poljubnim rezultatom.
 
-Zakaj branje uporabniških profilov ni omejeno na lastnika: aplikacija mora prikazati imena in ELO soigralcev, uravnotežiti ekipi in poiskati igralce za povabilo. Vse to so poizvedbe čez tuje dokumente, zato je branje odprto vsem prijavljenim, pisanje pa ostaja pri lastniku.
 
-### Znane varnostne pomanjkljivosti
 
-Pri pregledu trenutnih pravil so bile najdene naslednje slabosti. Navedene so odkrito, ker vplivajo na oceno zaupanja v sistem.
-
-| # | Pomanjkljivost | Posledica | Resnost |
-|---|---|---|---|
-| 1 | `users/{uid}` dovoli lastniku pisanje **vseh** polj | Uporabnik lahko s poljubnim odjemalcem svojemu dokumentu nastavi `elo: 9999`, `wins`, `reputation` ali odklene vse značke. Premik izračuna ELO na strežnik je s tem obidljiv. | **visoka** |
-| 2 | `matches/{id}` dovoli posodobitev **vsakemu** prijavljenemu | Kdor koli lahko na tuji tekmi spremeni `players` (izbriše soigralca), `attended` (komu odvzame ELO), `datetime`, `totalSpots` ali `matchStarted`. | **visoka** |
-| 3 | `groups` in `slots` nimata pravila | Ponavljajoče se skupine in RSVP termini v produkciji ne delujejo — vsi klici vrnejo *permission denied*. | funkcionalna okvara |
-| 4 | `reservations` dovoli ustvarjanje brez preverjanja | Rezervacijo je mogoče ustvariti s poljubno `price` (tudi 0) ali v imenu drugega uporabnika (`bookedBy` ni preverjen). | srednja |
-| 5 | `users` je berljiv vsem prijavljenim, vključno z `email` in `expoPushToken` | Razkritje e-pošte vseh uporabnikov in žetonov za potisna obvestila. | srednja |
-| 6 | Za Firebase Storage ni pravil v repozitoriju | Slike v klepetu se nalagajo v `chat-media/`, dostop pa določa nastavitev v konzoli, ki ni pod nadzorom različic. | neznana |
-| 7 | `messages` nima omejitve velikosti ali pogostosti | Igralec tekme lahko klepet zapolni s poljubno dolgimi sporočili. | nizka |
-
-**Priporočen vrstni red popravkov.** Najprej 1 in 2, ker neposredno razvrednotita ELO in reputacijo, torej osrednji mehanizem platforme. Pravilo za `users` naj dovoli pisanje samo polj, ki jih uporabnik res ureja (`displayName`, `position`, `expoPushToken`, `selectedBadge`), vse ostalo pa prepusti Cloud Functions — enako, kot je že urejeno pri tekmah. Pravilo za `matches` naj posodobitev omeji na gostitelja in na igralce, ki spreminjajo le polja, povezana s svojo udeležbo.
-
----
 
 ## Projektna ekipa
 

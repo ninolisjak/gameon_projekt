@@ -2,70 +2,207 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // Users - profil (ime, ELO, pozicija, reputacija) je viden vsem prijavljenim,
-    // ker aplikacija prikazuje soigralce, izravnava ekipe in isce igralce za povabila.
-    // Pisanje samo lastnik. Podkolekcije (reputationLog, matchHistory) ostanejo zasebne.
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function isSelf(uid) {
+      return signedIn() && request.auth.uid == uid;
+    }
+
+    function changed() {
+      return request.resource.data.diff(resource.data).affectedKeys();
+    }
+
     match /users/{uid} {
-      allow read: if request.auth != null;
-      allow write: if request.auth != null && request.auth.uid == uid;
-      match /{sub}/{docId} {
-        allow read, write: if request.auth != null && request.auth.uid == uid;
+      allow read: if signedIn();
+
+      allow create: if isSelf(uid)
+        && request.resource.data.uid == uid
+        && (!('elo' in request.resource.data) || request.resource.data.elo == 700)
+        && (!('reputation' in request.resource.data) || request.resource.data.reputation <= 50)
+        && !request.resource.data.keys().hasAny(
+             ['wins', 'losses', 'draws', 'matchesPlayed', 'goals']
+           );
+
+      allow update: if isSelf(uid)
+        && !changed().hasAny([
+             'uid', 'elo', 'wins', 'losses', 'draws', 'matchesPlayed', 'goals',
+             'unlockedBadges'
+           ])
+        && (
+             !changed().hasAny(['reputation'])
+             || request.resource.data.reputation <= resource.data.reputation
+           );
+
+      allow delete: if false;
+
+      match /reputationLog/{entryId} {
+        allow read: if isSelf(uid);
+        allow create: if isSelf(uid);
+        allow update, delete: if false;
+      }
+
+      match /matchHistory/{entryId} {
+        allow read: if isSelf(uid);
+        allow write: if false;
       }
     }
 
-    // Matches - vsi prijavljeni berejo, kdorkoli ustvari.
-    // Rezultat, kapetana in zaključek tekme piše samo Cloud Function (admin SDK
-    // obide pravila) - odjemalec teh polj ne sme spreminjati, sicer bi lahko
-    // obšel soglasje kapetanov in si sam razdelil ELO.
     match /matches/{matchId} {
-      allow read: if request.auth != null;
-      allow create: if request.auth != null
-        && request.resource.data.createdBy == request.auth.uid;
-      allow update: if request.auth != null
-        && !request.resource.data.diff(resource.data).affectedKeys()
-             .hasAny(['scoreA', 'scoreB', 'finalized', 'result',
-                      'captainA', 'captainB',
-                      'scoreSubmissions', 'scorePhase', 'scoreDisputed']);
-      allow delete: if request.auth != null
-        && resource.data.createdBy == request.auth.uid;
+      function isHost() {
+        return signedIn() && resource.data.createdBy == request.auth.uid;
+      }
 
-      // Klepet tekme. Pravila se ne dedujejo na podkolekcije, zato mora biti
-      // zapisano posebej. Berejo in pisejo samo prijavljeni igralci tekme,
-      // posiljatelj pa ne more lagati o svoji identiteti.
+      function attendedOk() {
+        return !changed().hasAny(['attended'])
+          || (
+               'attended' in resource.data
+               && request.resource.data.attended.toSet()
+                    .difference(resource.data.attended.toSet())
+                    .hasOnly([request.auth.uid])
+               && resource.data.attended.toSet()
+                    .difference(request.resource.data.attended.toSet())
+                    .size() == 0
+             );
+      }
+
+      function startTimeOk() {
+        return !changed().hasAny(['matchStarted', 'startRequested'])
+          || !('datetime' in resource.data)
+          || request.time >= resource.data.datetime;
+      }
+
+      function playersOk() {
+        return !changed().hasAny(['players'])
+          || (
+               request.resource.data.players.toSet()
+                 .difference(resource.data.players.toSet())
+                 .hasOnly(resource.data.waitlist.toSet().union([request.auth.uid].toSet()))
+               && resource.data.players.toSet()
+                 .difference(request.resource.data.players.toSet())
+                 .hasOnly([request.auth.uid])
+             );
+      }
+
+      allow read: if signedIn();
+
+      allow create: if signedIn()
+        && request.resource.data.createdBy == request.auth.uid
+        && (
+             !('finalized' in request.resource.data)
+             || request.resource.data.finalized == false
+           );
+
+      allow delete: if isHost();
+
+      allow update: if signedIn()
+        && !changed().hasAny([
+             'scoreA', 'scoreB', 'finalized', 'result',
+             'captainA', 'captainB',
+             'scoreSubmissions', 'scorePhase', 'scoreDisputed'
+           ])
+        && !changed().hasAny(['createdBy', 'createdAt'])
+        && startTimeOk()
+        && (
+             isHost()
+             || (
+                  changed().hasOnly([
+                    'players', 'waitlist', 'filledSpots', 'status',
+                    'attended', 'startConsent', 'costSplit',
+                    'pendingInvites', 'teamA', 'teamB',
+                    'teamsBalanced', 'balanceScore', 'balanceMeta',
+                    'startRequested', 'matchStarted', 'cancelReason'
+                  ])
+                  && attendedOk()
+                  && playersOk()
+                )
+           );
+
       match /messages/{messageId} {
-        allow read: if request.auth != null
-          && request.auth.uid in get(/databases/$(database)/documents/matches/$(matchId)).data.players;
-        allow create: if request.auth != null
-          && request.auth.uid in get(/databases/$(database)/documents/matches/$(matchId)).data.players
-          && request.resource.data.senderId == request.auth.uid;
+        function players() {
+          return get(/databases/$(database)/documents/matches/$(matchId)).data.players;
+        }
+
+        allow read: if signedIn() && request.auth.uid in players();
+
+        allow create: if signedIn()
+          && request.auth.uid in players()
+          && request.resource.data.senderId == request.auth.uid
+          && (
+               !('text' in request.resource.data)
+               || request.resource.data.text.size() <= 2000
+             );
+
+        allow update, delete: if false;
       }
     }
 
-    // Venues - javno branje, pisanje samo lastnik
+    match /groups/{groupId} {
+      allow read: if signedIn();
+
+      allow create: if signedIn()
+        && request.resource.data.createdBy == request.auth.uid;
+
+      allow update: if signedIn()
+        && !changed().hasAny(['createdBy', 'createdAt', 'inviteCode'])
+        && (
+             resource.data.createdBy == request.auth.uid
+             || changed().hasOnly(['members'])
+           );
+
+      allow delete: if signedIn() && resource.data.createdBy == request.auth.uid;
+    }
+
+    match /slots/{slotId} {
+      allow read: if signedIn();
+      allow create: if signedIn();
+
+      allow update: if signedIn()
+        && !changed().hasAny(['groupId', 'datetime', 'createdAt']);
+
+      allow delete: if false;
+    }
+
     match /venues/{venueId} {
       allow read: if true;
-      allow create: if request.auth != null
-        && request.resource.data.ownerId == request.auth.uid;
-      allow update, delete: if request.auth != null
-        && resource.data.ownerId == request.auth.uid;
 
-      // Schedule slots - javno branje, pisanje samo lastnik igrišča
+      allow create: if signedIn()
+        && request.resource.data.ownerId == request.auth.uid;
+
+      allow update: if signedIn()
+        && resource.data.ownerId == request.auth.uid
+        && !changed().hasAny(['ownerId']);
+
+      allow delete: if signedIn() && resource.data.ownerId == request.auth.uid;
+
       match /schedule/{slotId} {
         allow read: if true;
-        allow write: if request.auth != null
+        allow write: if signedIn()
           && get(/databases/$(database)/documents/venues/$(venueId)).data.ownerId == request.auth.uid;
+      }
+
+      match /booked/{bookingId} {
+        allow read: if true;
+        allow write: if false;
       }
     }
 
-    // Reservations - mobilna aplikacija ustvarja, lastnik igrišča in booker bereta
     match /reservations/{resId} {
-      allow read: if request.auth != null
-        && (resource.data.bookedBy == request.auth.uid
-            || resource.data.ownerId == request.auth.uid);
-      allow create: if request.auth != null;
-      allow update: if request.auth != null
-        && (resource.data.bookedBy == request.auth.uid
-            || resource.data.ownerId == request.auth.uid);
+      function party() {
+        return resource.data.bookedBy == request.auth.uid
+            || resource.data.ownerId == request.auth.uid;
+      }
+
+      allow read: if signedIn() && party();
+
+      allow create: if false;
+
+      allow update: if signedIn()
+        && party()
+        && changed().hasOnly(['paid']);
+
+      allow delete: if false;
     }
   }
 }

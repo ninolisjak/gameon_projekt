@@ -146,7 +146,7 @@ describe('reservationService', () => {
 
   it('listReservationsForVenue vrne rezervacije', async () => {
     (getDocs as jest.Mock).mockResolvedValueOnce({ docs: [{ id: 'r1', data: () => makeReservation() }, { id: 'r2', data: () => makeReservation() }] });
-    expect(await listReservationsForVenue('venue1')).toHaveLength(2);
+    expect(await listReservationsForVenue('venue1', 'owner1')).toHaveLength(2);
   });
 
   it('aggregateRevenue vrne prazno za brez rezervacij', () => expect(aggregateRevenue([], 'month')).toEqual([]));

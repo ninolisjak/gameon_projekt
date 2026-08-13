@@ -1,6 +1,11 @@
 const functions = require('firebase-functions');
 const admin = require('firebase-admin');
 const Stripe = require('stripe');
+const { validatePaymentRequest } = require('./paymentValidation');
+const { statsFromUser, mergeUnlockedBadges } = require('./badges');
+const {
+  validateReservationRequest, findScheduleSlot, findConflict,
+} = require('./reservations');
 
 admin.initializeApp();
 
@@ -12,51 +17,213 @@ const stripe = new Stripe(process.env.STRIPE_SECRET);
 const SUCCESS_BASE = 'https://gameon-app.invalid/payment-success';
 const CANCEL_URL   = 'https://gameon-app.invalid/payment-cancel';
 
+function requireValidPayment(data, context) {
+  const authUid = context && context.auth ? context.auth.uid : null;
+  const res = validatePaymentRequest(data, authUid);
+  if (!res.ok) throw new functions.https.HttpsError(res.code, res.message);
+  return res.value;
+}
+
 exports.createCheckoutSession = functions
   .region('europe-west1')
-  .https.onCall(async (data) => {
-    const { amount, entityType, entityId, userId, description } = data;
+  .https.onCall(async (data, context) => {
+    const p = requireValidPayment(data, context);
 
-    if (!amount || amount <= 0) throw new functions.https.HttpsError('invalid-argument', 'Neveljaven znesek.');
-    if (!entityType || !entityId || !userId) throw new functions.https.HttpsError('invalid-argument', 'Manjkajoči parametri.');
-
-    const successUrl = `${SUCCESS_BASE}?type=${entityType}&id=${encodeURIComponent(entityId)}&userId=${encodeURIComponent(userId)}`;
+    const successUrl = `${SUCCESS_BASE}`
+      + `?type=${p.entityType}`
+      + `&id=${encodeURIComponent(p.entityId)}`
+      + `&userId=${encodeURIComponent(p.userId)}`
+      + '&session_id={CHECKOUT_SESSION_ID}';
 
     const session = await stripe.checkout.sessions.create({
       payment_method_types: ['card'],
       line_items: [{
         price_data: {
           currency: 'eur',
-          product_data: { name: description || 'Najem igrišča — GameOn' },
-          unit_amount: Math.round(amount * 100),
+          product_data: { name: p.description || 'Najem igrišča — GameOn' },
+          unit_amount: p.amountInCents,
         },
         quantity: 1,
       }],
       mode: 'payment',
       success_url: successUrl,
       cancel_url: CANCEL_URL,
-      metadata: { entityType, entityId, userId },
+      metadata: {
+        entityType: p.entityType,
+        entityId: p.entityId,
+        userId: p.userId,
+      },
     });
 
-    return { url: session.url };
+    return { url: session.url, sessionId: session.id };
   });
 
 exports.createPaymentIntent = functions
   .region('europe-west1')
-  .https.onCall(async (data) => {
-    const { amount, entityType, entityId, userId, description } = data;
-
-    if (!amount || amount <= 0) throw new functions.https.HttpsError('invalid-argument', 'Neveljaven znesek.');
+  .https.onCall(async (data, context) => {
+    const p = requireValidPayment(data, context);
 
     const paymentIntent = await stripe.paymentIntents.create({
-      amount: Math.round(amount * 100),
+      amount: p.amountInCents,
       currency: 'eur',
       automatic_payment_methods: { enabled: true },
-      description: description || 'GameOn — najem igrišča',
-      metadata: { entityType, entityId, userId },
+      description: p.description || 'GameOn — najem igrišča',
+      metadata: {
+        entityType: p.entityType,
+        entityId: p.entityId,
+        userId: p.userId,
+      },
     });
 
     return { clientSecret: paymentIntent.client_secret };
+  });
+
+exports.confirmPayment = functions
+  .region('europe-west1')
+  .https.onCall(async (data, context) => {
+    const uid = context && context.auth ? context.auth.uid : null;
+    if (!uid) throw new functions.https.HttpsError('unauthenticated', 'Prijava je obvezna.');
+
+    const sessionId = data && data.sessionId;
+    if (typeof sessionId !== 'string' || sessionId.length === 0) {
+      throw new functions.https.HttpsError('invalid-argument', 'Manjka ID seje.');
+    }
+
+    let session;
+    try {
+      session = await stripe.checkout.sessions.retrieve(sessionId);
+    } catch (e) {
+      throw new functions.https.HttpsError('not-found', 'Seja ne obstaja.');
+    }
+
+    if (session.payment_status !== 'paid') {
+      throw new functions.https.HttpsError('failed-precondition', 'Plačilo ni zaključeno.');
+    }
+
+    const md = session.metadata || {};
+    if (md.userId !== uid) {
+      throw new functions.https.HttpsError('permission-denied', 'Seja pripada drugemu uporabniku.');
+    }
+
+    if (md.entityType === 'match') {
+      await db.collection('matches').doc(md.entityId).update({
+        [`costSplit.${uid}`]: 'paid',
+      });
+    } else if (md.entityType === 'reservation') {
+      await db.collection('reservations').doc(md.entityId).update({ paid: true });
+    } else {
+      throw new functions.https.HttpsError('invalid-argument', 'Neveljaven tip placila.');
+    }
+
+    return { ok: true, entityType: md.entityType, entityId: md.entityId };
+  });
+
+exports.createReservation = functions
+  .region('europe-west1')
+  .https.onCall(async (data, context) => {
+    const authUid = context && context.auth ? context.auth.uid : null;
+    const check = validateReservationRequest(data, authUid);
+    if (!check.ok) throw new functions.https.HttpsError(check.code, check.message);
+    const r = check.value;
+
+    const venueRef = db.collection('venues').doc(r.venueId);
+    const venueSnap = await venueRef.get();
+    if (!venueSnap.exists) {
+      throw new functions.https.HttpsError('not-found', 'Igrisce ne obstaja.');
+    }
+    const venue = venueSnap.data();
+    if (venue.active === false) {
+      throw new functions.https.HttpsError('failed-precondition', 'Igrisce ni na voljo.');
+    }
+
+    const scheduleSnap = await venueRef.collection('schedule').get();
+    const slots = scheduleSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+    const slot = findScheduleSlot(slots, r.weekday, r.startHHMM, r.endHHMM);
+    if (!slot) {
+      throw new functions.https.HttpsError('failed-precondition', 'Ta termin ni v urniku igrisca.');
+    }
+
+    const price = typeof slot.pricePerSlot === 'number' ? slot.pricePerSlot : 0;
+    const reservationRef = db.collection('reservations').doc(r.reservationId);
+    const bookedCol = venueRef.collection('booked');
+    const bookedRef = bookedCol.doc(r.reservationId);
+
+    await db.runTransaction(async (tx) => {
+      const dayQuery = bookedCol.where('dateKey', '==', r.dateKey);
+      const daySnap = await tx.get(dayQuery);
+      const booked = daySnap.docs.map(d => ({ id: d.id, ...d.data() }));
+
+      const conflict = findConflict(booked, r.startHHMM, r.endHHMM, r.reservationId);
+      if (conflict) {
+        throw new functions.https.HttpsError(
+          'already-exists',
+          `Termin se prekriva z rezervacijo ${conflict.startHHMM}-${conflict.endHHMM}.`,
+        );
+      }
+
+      const existingSnap = await tx.get(reservationRef);
+      if (existingSnap.exists && existingSnap.data().status !== 'cancelled') {
+        throw new functions.https.HttpsError('already-exists', 'Ta termin je ze rezerviran.');
+      }
+
+      const now = Timestamp.now();
+      const date = Timestamp.fromMillis(r.dateMillis);
+
+      tx.set(reservationRef, {
+        venueId: r.venueId,
+        ownerId: venue.ownerId,
+        bookedBy: r.bookedBy,
+        matchId: r.matchId,
+        date,
+        dateKey: r.dateKey,
+        startHHMM: r.startHHMM,
+        endHHMM: r.endHHMM,
+        price,
+        status: 'confirmed',
+        paid: false,
+        createdAt: now,
+      });
+
+      tx.set(bookedRef, {
+        dateKey: r.dateKey,
+        date,
+        startHHMM: r.startHHMM,
+        endHHMM: r.endHHMM,
+      });
+    });
+
+    return { reservationId: r.reservationId, price };
+  });
+
+exports.cancelReservation = functions
+  .region('europe-west1')
+  .https.onCall(async (data, context) => {
+    const uid = context && context.auth ? context.auth.uid : null;
+    if (!uid) throw new functions.https.HttpsError('unauthenticated', 'Prijava je obvezna.');
+
+    const reservationId = data && data.reservationId;
+    if (typeof reservationId !== 'string' || !reservationId) {
+      throw new functions.https.HttpsError('invalid-argument', 'Manjka ID rezervacije.');
+    }
+
+    const reservationRef = db.collection('reservations').doc(reservationId);
+
+    await db.runTransaction(async (tx) => {
+      const snap = await tx.get(reservationRef);
+      if (!snap.exists) {
+        throw new functions.https.HttpsError('not-found', 'Rezervacija ne obstaja.');
+      }
+      const res = snap.data();
+      if (res.bookedBy !== uid && res.ownerId !== uid) {
+        throw new functions.https.HttpsError('permission-denied', 'Rezervacija ni tvoja.');
+      }
+      if (res.status === 'cancelled') return;
+
+      tx.update(reservationRef, { status: 'cancelled', cancelledAt: Timestamp.now() });
+      tx.delete(db.collection('venues').doc(res.venueId).collection('booked').doc(reservationId));
+    });
+
+    return { ok: true };
   });
 
 const STARTING_ELO = 700;
@@ -141,10 +308,17 @@ async function resolveMatch(tx, matchRef, match, scoreA, scoreB, submissions) {
 
   const stats = allPlayers.map((uid, i) => {
     const d = snaps[i] && snaps[i].exists ? snaps[i].data() : null;
+    const n = (v) => (typeof v === 'number' && isFinite(v) ? v : 0);
     return {
       uid,
       elo: d && d.elo !== undefined && d.elo !== null ? d.elo : STARTING_ELO,
       reputation: d && d.reputation !== undefined && d.reputation !== null ? d.reputation : STARTING_REPUTATION,
+      wins: n(d && d.wins),
+      losses: n(d && d.losses),
+      draws: n(d && d.draws),
+      matchesPlayed: n(d && d.matchesPlayed),
+      goals: n(d && d.goals),
+      unlockedBadges: d && Array.isArray(d.unlockedBadges) ? d.unlockedBadges : [],
     };
   });
 
@@ -178,6 +352,7 @@ async function resolveMatch(tx, matchRef, match, scoreA, scoreB, submissions) {
       isDraw: hasAttended && result === 'draw',
       newElo: Math.max(0, s.elo + dElo),
       newRep: Math.max(0, Math.min(100, s.reputation + dRep)),
+      before: s,
     };
   });
 
@@ -197,6 +372,17 @@ async function resolveMatch(tx, matchRef, match, scoreA, scoreB, submissions) {
     if (p.isWin) patch.wins = FieldValue.increment(1);
     else if (p.isLoss) patch.losses = FieldValue.increment(1);
     else if (p.isDraw) patch.draws = FieldValue.increment(1);
+
+    const nextStats = {
+      matchesPlayed: p.before.matchesPlayed + 1,
+      wins: p.before.wins + (p.isWin ? 1 : 0),
+      goals: p.before.goals,
+      elo: p.newElo,
+      reputation: p.newRep,
+    };
+    const merged = mergeUnlockedBadges(p.before.unlockedBadges, nextStats);
+    if (merged.changed) patch.unlockedBadges = merged.badges;
+
     tx.set(userRef, patch, { merge: true });
 
     tx.set(userRef.collection('reputationLog').doc(), {
@@ -236,6 +422,73 @@ async function resolveMatch(tx, matchRef, match, scoreA, scoreB, submissions) {
 
   return result;
 }
+
+const AUTO_START_DELAY_MS = 5 * 60 * 1000;
+
+const AUTO_START_LOOKBACK_MS = 24 * 60 * 60 * 1000;
+
+exports.autoStartMatches = functions
+  .region('europe-west1')
+  .pubsub.schedule('every 1 minutes')
+  .timeZone('Europe/Ljubljana')
+  .onRun(async () => {
+    const now = Date.now();
+    const cutoff = Timestamp.fromMillis(now - AUTO_START_DELAY_MS);
+    const lookback = Timestamp.fromMillis(now - AUTO_START_LOOKBACK_MS);
+
+    const snap = await db.collection('matches')
+      .where('datetime', '>=', lookback)
+      .where('datetime', '<=', cutoff)
+      .get();
+
+    const candidates = snap.docs.filter((d) => {
+      const m = d.data();
+      if (m.matchStarted === true) return false;
+      if (m.finalized === true) return false;
+      if (m.status === 'closed') return false;
+      if (m.cancelReason) return false;
+      return true;
+    });
+
+    if (candidates.length === 0) return null;
+
+    await Promise.all(candidates.map((d) => d.ref.update({
+      matchStarted: true,
+      startRequested: false,
+      autoStarted: true,
+      autoStartedAt: Timestamp.now(),
+    })));
+
+    console.log(`autoStartMatches: zagnanih ${candidates.length} tekem`);
+    return null;
+  });
+
+exports.syncBadges = functions
+  .region('europe-west1')
+  .https.onCall(async (data, context) => {
+    const uid = context && context.auth ? context.auth.uid : null;
+    if (!uid) throw new functions.https.HttpsError('unauthenticated', 'Prijava je obvezna.');
+
+    const userRef = db.collection('users').doc(uid);
+    const snap = await userRef.get();
+    if (!snap.exists) return { unlocked: [], newlyUnlocked: [] };
+
+    const d = snap.data();
+    const before = Array.isArray(d.unlockedBadges) ? d.unlockedBadges : [];
+    const merged = mergeUnlockedBadges(before, statsFromUser(d));
+
+    if (merged.changed) {
+      await userRef.set(
+        { unlockedBadges: merged.badges, updatedAt: Timestamp.now() },
+        { merge: true },
+      );
+    }
+
+    return {
+      unlocked: merged.badges,
+      newlyUnlocked: merged.badges.filter(b => !before.includes(b)),
+    };
+  });
 
 exports.submitMatchScore = functions
   .region('europe-west1')

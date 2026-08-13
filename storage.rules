@@ -1,0 +1,28 @@
+rules_version = '2';
+
+service firebase.storage {
+  match /b/{bucket}/o {
+
+    match /chat-media/{matchId}/{fileName} {
+      function matchPlayers() {
+        return firestore.get(/databases/(default)/documents/matches/$(matchId)).data.players;
+      }
+
+      function isPlayer() {
+        return request.auth != null && request.auth.uid in matchPlayers();
+      }
+
+      allow read: if isPlayer();
+
+      allow create: if isPlayer()
+        && request.resource.size < 5 * 1024 * 1024
+        && request.resource.contentType.matches('image/.*');
+
+      allow update, delete: if false;
+    }
+
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}
