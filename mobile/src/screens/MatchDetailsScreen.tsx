@@ -246,11 +246,28 @@ export default function MatchDetailsScreen() {
   const startAt = match ? matchStartMillis(match) : null;
   const startAllowed = startAt === null ? true : nowTs >= startAt;
 
+  const isRunning = !!match?.matchStarted && !match?.finalized;
+
   React.useEffect(() => {
-    if (startAt === null || startAllowed) return;
+    const needsCountdown = startAt !== null && !startAllowed;
+    if (!needsCountdown && !isRunning) return;
     const id = setInterval(() => setNowTs(Date.now()), 1000);
     return () => clearInterval(id);
-  }, [startAt, startAllowed]);
+  }, [startAt, startAllowed, isRunning]);
+
+  const elapsedLabel = React.useMemo(() => {
+    if (!isRunning) return '';
+    const raw: any = match?.matchStartedAt;
+    const started = raw?.toDate ? raw.toDate().getTime() : (raw ? new Date(raw).getTime() : NaN);
+    if (Number.isNaN(started)) return '';
+    const ms = Math.max(0, nowTs - started);
+    const totalSec = Math.floor(ms / 1000);
+    const h = Math.floor(totalSec / 3600);
+    const m = Math.floor((totalSec % 3600) / 60);
+    const s = totalSec % 60;
+    const pad = (n: number) => String(n).padStart(2, '0');
+    return h > 0 ? `${h}:${pad(m)}:${pad(s)}` : `${pad(m)}:${pad(s)}`;
+  }, [isRunning, match?.matchStartedAt, nowTs]);
 
   const countdownLabel = React.useMemo(() => {
     if (startAt === null) return '';
@@ -382,8 +399,14 @@ export default function MatchDetailsScreen() {
                   color={match.matchStarted ? '#22c55e' : colors.primaryLight}
                 />
                 <Text style={styles.consentTitle}>
-                  {match.matchStarted ? 'Tekma je začeta!' : 'Potrditev začetka'}
+                  {match.matchStarted ? 'Tekma poteka' : 'Potrditev začetka'}
                 </Text>
+                {match.matchStarted && !!elapsedLabel && (
+                  <View style={styles.matchTimerPill}>
+                    <Ionicons name="time-outline" size={13} color="#22c55e" />
+                    <Text style={styles.matchTimerText}>{elapsedLabel}</Text>
+                  </View>
+                )}
               </View>
               {(match.players ?? []).map(uid => {
                 const consent = match.startConsent?.[uid] ?? 'pending';

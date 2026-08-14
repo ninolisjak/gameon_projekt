@@ -54,10 +54,17 @@ service cloud.firestore {
         return signedIn() && resource.data.createdBy == request.auth.uid;
       }
 
+      function isPlayer() {
+        return signedIn() && request.auth.uid in resource.data.players;
+      }
+
       function attendedOk() {
         return !changed().hasAny(['attended'])
           || (
                'attended' in resource.data
+               && request.auth.uid in resource.data.players
+               && resource.data.get('matchStarted', false) == true
+               && resource.data.get('finalized', false) == false
                && request.resource.data.attended.toSet()
                     .difference(resource.data.attended.toSet())
                     .hasOnly([request.auth.uid])
@@ -73,25 +80,93 @@ service cloud.firestore {
           || request.time >= resource.data.datetime;
       }
 
+      function capacityOk() {
+        return !changed().hasAny(['players', 'filledSpots', 'status'])
+          || (
+               request.resource.data.filledSpots == request.resource.data.players.size()
+               && request.resource.data.players.size() <= resource.data.totalSpots
+               && (
+                    (
+                      request.resource.data.status == 'closed'
+                      && !changed().hasAny(['players', 'filledSpots'])
+                    )
+                    || request.resource.data.status == (
+                         request.resource.data.players.size() >= resource.data.totalSpots
+                           ? 'full' : 'open'
+                       )
+                  )
+             );
+      }
+
       function playersOk() {
         return !changed().hasAny(['players'])
           || (
                request.resource.data.players.toSet()
                  .difference(resource.data.players.toSet())
-                 .hasOnly(resource.data.waitlist.toSet().union([request.auth.uid].toSet()))
+                 .hasOnly([request.auth.uid])
                && resource.data.players.toSet()
                  .difference(request.resource.data.players.toSet())
                  .hasOnly([request.auth.uid])
              );
       }
 
+      function waitlistOk() {
+        return !changed().hasAny(['waitlist'])
+          || (
+               request.resource.data.waitlist.toSet()
+                 .difference(resource.data.waitlist.toSet())
+                 .hasOnly([request.auth.uid])
+               && resource.data.waitlist.toSet()
+                 .difference(request.resource.data.waitlist.toSet())
+                 .hasOnly([request.auth.uid])
+             );
+      }
+
+      function consentOk() {
+        return !changed().hasAny(['startConsent'])
+          || (
+               request.auth.uid in resource.data.players
+               && request.resource.data.startConsent.diff(
+                    resource.data.get('startConsent', {})
+                  ).affectedKeys().hasOnly([request.auth.uid])
+             );
+      }
+
+      function costSplitOk() {
+        return !changed().hasAny(['costSplit'])
+          || (
+               request.auth.uid in resource.data.players
+               && request.resource.data.costSplit.diff(
+                    resource.data.get('costSplit', {})
+                  ).affectedKeys().hasOnly([request.auth.uid])
+             );
+      }
+
+      function invitesOk() {
+        return !changed().hasAny(['pendingInvites'])
+          || request.resource.data.pendingInvites.diff(
+               resource.data.get('pendingInvites', {})
+             ).affectedKeys().hasOnly([request.auth.uid]);
+      }
+
       allow read: if signedIn();
 
       allow create: if signedIn()
         && request.resource.data.createdBy == request.auth.uid
+        && request.resource.data.totalSpots is int
+        && request.resource.data.totalSpots >= 2
+        && request.resource.data.totalSpots <= 30
+        && request.resource.data.players.size() <= request.resource.data.totalSpots
+        && request.resource.data.filledSpots == request.resource.data.players.size()
+        && request.resource.data.datetime is timestamp
+        && request.resource.data.datetime > request.time
         && (
              !('finalized' in request.resource.data)
              || request.resource.data.finalized == false
+           )
+        && (
+             !('matchStarted' in request.resource.data)
+             || request.resource.data.matchStarted == false
            );
 
       allow delete: if isHost();
@@ -102,8 +177,13 @@ service cloud.firestore {
              'captainA', 'captainB',
              'scoreSubmissions', 'scorePhase', 'scoreDisputed'
            ])
-        && !changed().hasAny(['createdBy', 'createdAt'])
+        && !changed().hasAny([
+             'createdBy', 'createdAt', 'totalSpots', 'datetime',
+             'isPremium', 'isPrivate', 'inviteCode'
+           ])
+        && resource.data.get('finalized', false) == false
         && startTimeOk()
+        && capacityOk()
         && (
              isHost()
              || (
@@ -112,10 +192,15 @@ service cloud.firestore {
                     'attended', 'startConsent', 'costSplit',
                     'pendingInvites', 'teamA', 'teamB',
                     'teamsBalanced', 'balanceScore', 'balanceMeta',
-                    'startRequested', 'matchStarted', 'cancelReason'
+                    'startRequested', 'matchStarted', 'matchStartedAt', 'cancelReason'
                   ])
                   && attendedOk()
                   && playersOk()
+                  && waitlistOk()
+                  && consentOk()
+                  && costSplitOk()
+                  && invitesOk()
+                  && (!changed().hasAny(['cancelReason']) || isPlayer())
                 )
            );
 
@@ -148,18 +233,38 @@ service cloud.firestore {
         && !changed().hasAny(['createdBy', 'createdAt', 'inviteCode'])
         && (
              resource.data.createdBy == request.auth.uid
-             || changed().hasOnly(['members'])
+             || (
+                  changed().hasOnly(['members'])
+                  && request.resource.data.members.toSet()
+                       .difference(resource.data.members.toSet())
+                       .hasOnly([request.auth.uid])
+                  && resource.data.members.toSet()
+                       .difference(request.resource.data.members.toSet())
+                       .hasOnly([request.auth.uid])
+                )
            );
 
       allow delete: if signedIn() && resource.data.createdBy == request.auth.uid;
     }
 
     match /slots/{slotId} {
+      function groupMembers(gid) {
+        return get(/databases/$(database)/documents/groups/$(gid)).data.members;
+      }
+
       allow read: if signedIn();
-      allow create: if signedIn();
+
+      allow create: if signedIn()
+        && request.auth.uid in groupMembers(request.resource.data.groupId);
 
       allow update: if signedIn()
-        && !changed().hasAny(['groupId', 'datetime', 'createdAt']);
+        && !changed().hasAny(['groupId', 'datetime', 'createdAt'])
+        && request.auth.uid in groupMembers(resource.data.groupId)
+        && (
+             !changed().hasAny(['rsvps'])
+             || request.resource.data.rsvps.diff(resource.data.rsvps)
+                  .affectedKeys().hasOnly([request.auth.uid])
+           );
 
       allow delete: if false;
     }
@@ -198,9 +303,7 @@ service cloud.firestore {
 
       allow create: if false;
 
-      allow update: if signedIn()
-        && party()
-        && changed().hasOnly(['paid']);
+      allow update: if false;
 
       allow delete: if false;
     }

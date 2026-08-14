@@ -402,11 +402,18 @@ describe('cancelReservation in markReservationPaid', () => {
     await expect(cancelReservation('rez-1')).rejects.toThrow('Preklic ni mogoč.');
   });
 
-  it('označitev plačila zapiše v dokument rezervacije', async () => {
+  it('označitev plačila pošlje identifikator rezervacije strežniku', async () => {
     await markReservationPaid('rez-1');
-    expect(updateDoc).toHaveBeenCalledWith(
-      expect.objectContaining({ id: 'rez-1' }),
-      { paid: true },
-    );
+    expect(mockCallable.mock.calls[0][0]).toEqual({ reservationId: 'rez-1' });
+  });
+
+  it('označitev plačila ne piše neposredno v Firestore', async () => {
+    await markReservationPaid('rez-1');
+    expect(updateDoc).not.toHaveBeenCalled();
+  });
+
+  it('napako pri označitvi plačila posreduje naprej', async () => {
+    mockCallable.mockRejectedValueOnce(new Error('Rezervacija ni tvoja.'));
+    await expect(markReservationPaid('rez-1')).rejects.toThrow('Rezervacija ni tvoja.');
   });
 });

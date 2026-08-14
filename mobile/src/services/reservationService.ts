@@ -1,4 +1,4 @@
-import { collection, query, where, getDocs, doc, updateDoc } from 'firebase/firestore';
+import { collection, query, where, getDocs } from 'firebase/firestore';
 import { httpsCallable } from 'firebase/functions';
 import { db, functions } from '../config/firebase';
 
@@ -133,7 +133,8 @@ export async function cancelReservation(reservationId: string): Promise<void> {
 }
 
 export async function markReservationPaid(reservationId: string): Promise<void> {
-  await updateDoc(doc(db, 'reservations', reservationId), { paid: true });
+  const fn = httpsCallable(functions, 'markReservationPaid');
+  await fn({ reservationId });
 }
 
 export async function fetchMyReservations(userId: string): Promise<Reservation[]> {

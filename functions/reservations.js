@@ -36,7 +36,9 @@ function buildReservationId(venueId, dateKey, startHHMM) {
   return `${venueId}_${dateKey}_${startHHMM.replace(':', '')}`;
 }
 
-function validateReservationRequest(data, authUid) {
+const MAX_BOOKING_AHEAD_MS = 365 * 24 * 60 * 60 * 1000;
+
+function validateReservationRequest(data, authUid, now) {
   if (!authUid) {
     return { ok: false, code: 'unauthenticated', message: 'Prijava je obvezna.' };
   }
@@ -55,6 +57,19 @@ function validateReservationRequest(data, authUid) {
   }
   if (start >= end) {
     return { ok: false, code: 'invalid-argument', message: 'Konec termina mora biti za zacetkom.' };
+  }
+
+  const nowMs = typeof now === 'number' ? now : Date.now();
+  const VENUE_UTC_OFFSET_MS = 2 * 60 * 60 * 1000;
+  const slotStartMs = millisFromDateKey(body.dateKey)
+    - (12 * 60 * 60 * 1000)
+    + (start * 60 * 1000)
+    - VENUE_UTC_OFFSET_MS;
+  if (slotStartMs <= nowMs) {
+    return { ok: false, code: 'invalid-argument', message: 'Termin mora biti v prihodnosti.' };
+  }
+  if (slotStartMs > nowMs + MAX_BOOKING_AHEAD_MS) {
+    return { ok: false, code: 'invalid-argument', message: 'Termin je predalec v prihodnosti.' };
   }
   if (body.matchId !== undefined && body.matchId !== null && typeof body.matchId !== 'string') {
     return { ok: false, code: 'invalid-argument', message: 'Neveljaven ID tekme.' };
@@ -92,6 +107,7 @@ function findConflict(booked, startHHMM, endHHMM, ignoreId) {
 }
 
 module.exports = {
+  MAX_BOOKING_AHEAD_MS,
   hhmmToMinutes,
   rangesOverlap,
   isValidDateKey,

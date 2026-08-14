@@ -98,13 +98,26 @@ beforeEach(() => {
 
 // Prijava prisotnosti 
 describe('PremiumMatchPanel — prijava prisotnosti', () => {
-  it('prijavljenemu igralcu prikaže poziv k prijavi prisotnosti', async () => {
-    const { getByText } = await renderPanel(makeMatch());
+  it('pred začetkom tekme prisotnosti ne prikaže', async () => {
+    const { queryByText } = await renderPanel(makeMatch({ matchStarted: false }));
+    expect(queryByText('Prijava prisotnosti')).toBeNull();
+    expect(queryByText('SEM TUKAJ')).toBeNull();
+  });
+
+  it('po začetku tekme prijavljenemu igralcu prikaže poziv k prijavi prisotnosti', async () => {
+    const { getByText } = await renderPanel(makeMatch({ matchStarted: true }));
     expect(getByText('Prijava prisotnosti')).toBeTruthy();
   });
 
+  it('po zaključku tekme prisotnosti ne prikaže več', async () => {
+    const { queryByText } = await renderPanel(
+      makeMatch({ matchStarted: true, finalized: true })
+    );
+    expect(queryByText('Prijava prisotnosti')).toBeNull();
+  });
+
   it('pritisk na gumb pokliče checkIn z ID tekme in uporabnika', async () => {
-    const { getByText } = await renderPanel(makeMatch());
+    const { getByText } = await renderPanel(makeMatch({ matchStarted: true }));
 
     await act(async () => {
       fireEvent.press(getByText('SEM TUKAJ'));
@@ -115,7 +128,7 @@ describe('PremiumMatchPanel — prijava prisotnosti', () => {
 
   it('že prijavljenemu igralcu gumba ne prikaže več', async () => {
     const { queryByText, getByText } = await renderPanel(
-      makeMatch({ attended: ['user1'] })
+      makeMatch({ matchStarted: true, attended: ['user1'] })
     );
 
     expect(getByText('Prisoten')).toBeTruthy();
@@ -124,7 +137,7 @@ describe('PremiumMatchPanel — prijava prisotnosti', () => {
 
   it('neprijavljenemu igralcu prisotnosti ne ponuja', async () => {
     const { queryByText } = await renderPanel(
-      makeMatch({ players: ['user2', 'user3'] }),
+      makeMatch({ matchStarted: true, players: ['user2', 'user3'] }),
       'outsider'
     );
 

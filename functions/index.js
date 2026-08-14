@@ -122,7 +122,7 @@ exports.createReservation = functions
   .region('europe-west1')
   .https.onCall(async (data, context) => {
     const authUid = context && context.auth ? context.auth.uid : null;
-    const check = validateReservationRequest(data, authUid);
+    const check = validateReservationRequest(data, authUid, Date.now());
     if (!check.ok) throw new functions.https.HttpsError(check.code, check.message);
     const r = check.value;
 
@@ -221,6 +221,38 @@ exports.cancelReservation = functions
 
       tx.update(reservationRef, { status: 'cancelled', cancelledAt: Timestamp.now() });
       tx.delete(db.collection('venues').doc(res.venueId).collection('booked').doc(reservationId));
+    });
+
+    return { ok: true };
+  });
+
+exports.markReservationPaid = functions
+  .region('europe-west1')
+  .https.onCall(async (data, context) => {
+    const uid = context && context.auth ? context.auth.uid : null;
+    if (!uid) throw new functions.https.HttpsError('unauthenticated', 'Prijava je obvezna.');
+
+    const reservationId = data && data.reservationId;
+    if (typeof reservationId !== 'string' || !reservationId) {
+      throw new functions.https.HttpsError('invalid-argument', 'Manjka ID rezervacije.');
+    }
+
+    const ref = db.collection('reservations').doc(reservationId);
+
+    await db.runTransaction(async (tx) => {
+      const snap = await tx.get(ref);
+      if (!snap.exists) {
+        throw new functions.https.HttpsError('not-found', 'Rezervacija ne obstaja.');
+      }
+      const res = snap.data();
+      if (res.bookedBy !== uid) {
+        throw new functions.https.HttpsError('permission-denied', 'Rezervacija ni tvoja.');
+      }
+      if (res.status === 'cancelled') {
+        throw new functions.https.HttpsError('failed-precondition', 'Rezervacija je preklicana.');
+      }
+      if (res.paid === true) return;
+      tx.update(ref, { paid: true, paidAt: Timestamp.now() });
     });
 
     return { ok: true };
@@ -457,6 +489,7 @@ exports.autoStartMatches = functions
       startRequested: false,
       autoStarted: true,
       autoStartedAt: Timestamp.now(),
+      matchStartedAt: d.data().matchStartedAt || Timestamp.now(),
     })));
 
     console.log(`autoStartMatches: zagnanih ${candidates.length} tekem`);

@@ -157,6 +157,16 @@ export const makeStyles = (colors: Colors) => StyleSheet.create({
     padding: 16, borderWidth: 1, borderColor: colors.borderSubtle,
   },
   consentTitle: { color: colors.text, fontSize: 15, fontWeight: '800' },
+  matchTimerPill: {
+    flexDirection: 'row', alignItems: 'center', gap: 5,
+    marginLeft: 'auto',
+    paddingHorizontal: 10, paddingVertical: 4, borderRadius: 999,
+    backgroundColor: '#22c55e20', borderWidth: 1, borderColor: '#22c55e50',
+  },
+  matchTimerText: {
+    color: '#22c55e', fontSize: 13, fontWeight: '800',
+    fontVariant: ['tabular-nums'], letterSpacing: 0.5,
+  },
   consentPlayerRow: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 7,
   },

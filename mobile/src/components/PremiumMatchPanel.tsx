@@ -558,7 +558,7 @@ export default function PremiumMatchPanel({ match, userId, userNames }: Props) {
     <View style={{ gap: 18 }}>
       {renderScorePanel()}
 
-      {isJoined && (
+      {isJoined && !!match.matchStarted && !finalized && (
         <View style={styles.checkInBar}>
           <View style={styles.checkInIcon}>
             <Ionicons name={hasCheckedIn ? 'checkmark-circle' : 'location-outline'} size={20} color={colors.primaryLight} />

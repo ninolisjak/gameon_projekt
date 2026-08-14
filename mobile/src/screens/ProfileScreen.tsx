@@ -431,9 +431,6 @@ export default function ProfileScreen() {
                           <Text style={{ color: colors.textMuted, fontSize: 11 }}>
                             · {m.scoreA} - {m.scoreB} ({m.team === 'A' ? 'Ekipa A' : 'Ekipa B'})
                           </Text>
-                          {m.goals > 0 && (
-                            <Text style={{ color: colors.textMuted, fontSize: 11 }}>· ⚽ {m.goals}</Text>
-                          )}
                         </View>
                         <Text style={{ color: colors.textMuted, fontSize: 11, marginTop: 2 }} numberOfLines={1}>
                           {m.locationName || (m.sport === 'futsal' ? 'Futsal' : 'Košarka')} · {formatDate(m.datetime)}
