@@ -300,7 +300,11 @@ export async function joinMatchByInviteCode(code: string, userId: string): Promi
   const ref = doc(db, 'matches', matchId);
   await runTransaction(db, async tx => {
     const txSnap = await tx.get(ref);
+    if (!txSnap.exists()) throw new Error('Tekma ne obstaja.');
     const txData = txSnap.data() as Match;
+
+    if (txData.players?.includes(userId)) throw new Error('Že si prijavljen na to tekmo.');
+    if (txData.waitlist?.includes(userId)) throw new Error('Že si na čakalni vrsti.');
 
     if (txData.filledSpots < txData.totalSpots) {
       const newFilled = txData.filledSpots + 1;
@@ -733,6 +737,7 @@ export async function invitePlayerToMatch(
     if (data.players?.includes(targetUserId)) throw new Error('Igralec je že prijavljen.');
     if (data.waitlist?.includes(targetUserId)) throw new Error('Igralec je že na čakalni vrsti.');
     if (data.pendingInvites?.[targetUserId]) throw new Error('Povabilo je že bilo poslano.');
+    if (data.filledSpots >= data.totalSpots) throw new Error('Tekma je polna.');
     tx.update(ref, {
       [`pendingInvites.${targetUserId}`]: { team, invitedAt: Timestamp.now() },
     });
@@ -771,6 +776,7 @@ export async function acceptInvite(matchId: string, userId: string): Promise<voi
     const invite = data.pendingInvites?.[userId];
     if (!invite) throw new Error('Povabilo ne obstaja.');
     if (data.players?.includes(userId)) throw new Error('Že prijavljen.');
+    if (data.filledSpots >= data.totalSpots) throw new Error('Tekma je polna.');
 
     const teamField = invite.team === 'A' ? 'teamA' : 'teamB';
     const currentTeam = (data[teamField] ?? []) as string[];
