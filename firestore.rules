@@ -98,12 +98,17 @@ service cloud.firestore {
              );
       }
 
+      function addedToPlayers() {
+        return request.resource.data.players.toSet()
+                 .difference(resource.data.players.toSet());
+      }
+
       function playersOk() {
         return !changed().hasAny(['players'])
           || (
-               request.resource.data.players.toSet()
-                 .difference(resource.data.players.toSet())
-                 .hasOnly([request.auth.uid])
+               addedToPlayers().hasOnly(
+                 resource.data.waitlist.toSet().union([request.auth.uid].toSet())
+               )
                && resource.data.players.toSet()
                  .difference(request.resource.data.players.toSet())
                  .hasOnly([request.auth.uid])
@@ -118,7 +123,7 @@ service cloud.firestore {
                  .hasOnly([request.auth.uid])
                && resource.data.waitlist.toSet()
                  .difference(request.resource.data.waitlist.toSet())
-                 .hasOnly([request.auth.uid])
+                 .hasOnly(addedToPlayers().union([request.auth.uid].toSet()))
              );
       }
 
