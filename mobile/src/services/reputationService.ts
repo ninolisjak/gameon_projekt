@@ -16,10 +16,8 @@ export const REP_DELTA = {
   manual: 0,
 } as const;
 
-export const DEMO_USERS_LOWER = new Set(['ana', 'marc', 'luka', 'niko']);
-
 function isRealUid(uid: string): boolean {
-  return uid.length > 10 && !DEMO_USERS_LOWER.has(uid);
+  return uid.length > 10;
 }
 
 export async function applyReputationChange(

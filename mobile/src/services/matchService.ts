@@ -1258,31 +1258,6 @@ export function subscribeUserDoc(uid: string, onData: (u: UserDoc | null) => voi
   }, err => onError?.(err));
 }
 
-export const DEMO_USERS = ['ana', 'marc', 'luka', 'niko'] as const;
-
-(function seedDemo() {
-  if (store.length > 0) return;
-  const tomorrow = new Date();
-  tomorrow.setDate(tomorrow.getDate() + 1);
-  tomorrow.setHours(18, 0, 0, 0);
-  store.push({
-    id: 'demo-seed',
-    sport: 'futsal',
-    location: { lat: 46.5617, lng: 15.6386, name: 'Demo: tekma s čakalno vrsto' },
-    datetime: tomorrow,
-    totalSpots: 2,
-    filledSpots: 2,
-    status: 'full',
-    isPublic: true,
-    isPrivate: false,
-    players: ['ana', 'marc'],
-    waitlist: ['luka'],
-    createdBy: 'ana',
-    createdAt: new Date(),
-    isPremium: false,
-  });
-})();
-
 export async function createStripePaymentIntent(
   amount: number,
   entityType: 'match' | 'reservation',

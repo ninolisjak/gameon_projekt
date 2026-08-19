@@ -4,7 +4,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { auth } from '../config/firebase';
-import { joinMatch, leaveMatch, leaveWaitlist, subscribeMatch, resolveUserNames, Match, DEMO_USERS, requestMatchStart, respondToMatchStart, cancelMatchLowAttendance, acceptInvite, declineInvite, matchStartMillis } from '../services/matchService';
+import { joinMatch, leaveMatch, leaveWaitlist, subscribeMatch, resolveUserNames, Match, requestMatchStart, respondToMatchStart, cancelMatchLowAttendance, acceptInvite, declineInvite, matchStartMillis } from '../services/matchService';
 import { showLocalNotification } from '../services/notificationService';
 import { makeStyles } from '../styles/MatchDetailsScreenStyles';
 import { useColors, usePremium } from '../context/PremiumContext';
@@ -34,7 +34,7 @@ export default function MatchDetailsScreen() {
   const [busy, setBusy] = React.useState(false);
   const [startBusy, setStartBusy] = React.useState(false);
   const [nowTs, setNowTs] = React.useState(() => Date.now());
-  const [userId, setUserId] = React.useState<string>(auth.currentUser?.uid ?? 'niko');
+  const userId = auth.currentUser?.uid ?? '';
   const [userNames, setUserNames] = React.useState<Map<string, string>>(new Map());
 
   const prevStartRequestedRef = React.useRef<boolean | null>(null);
@@ -344,32 +344,6 @@ export default function MatchDetailsScreen() {
         </SafeAreaView>
 
         <View style={styles.body}>
-          <View style={styles.userSwitcherCard}>
-            <Text style={styles.userSwitcherLabel}>Demo · izberi identiteto</Text>
-            <View style={styles.userSwitcherRow}>
-              {auth.currentUser && (
-                <TouchableOpacity
-                  key="me"
-                  style={[styles.userPill, userId === auth.currentUser.uid && styles.userPillActive]}
-                  onPress={() => setUserId(auth.currentUser!.uid)}
-                  activeOpacity={0.8}
-                >
-                  <Text style={[styles.userPillText, userId === auth.currentUser.uid && styles.userPillTextActive]}>Jaz</Text>
-                </TouchableOpacity>
-              )}
-              {DEMO_USERS.map(u => (
-                <TouchableOpacity
-                  key={u}
-                  style={[styles.userPill, userId === u && styles.userPillActive]}
-                  onPress={() => setUserId(u)}
-                  activeOpacity={0.8}
-                >
-                  <Text style={[styles.userPillText, userId === u && styles.userPillTextActive]}>{u}</Text>
-                </TouchableOpacity>
-              ))}
-            </View>
-          </View>
-
           <View style={styles.infoGrid}>
             <View style={styles.infoCard}>
               <View style={styles.infoIconRow}>
