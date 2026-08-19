@@ -482,7 +482,10 @@ exports.autoStartMatches = functions
       return true;
     });
 
-    if (candidates.length === 0) return null;
+    if (candidates.length === 0) {
+      console.log('autoStartMatches: ni tekem za zagon');
+      return;
+    }
 
     await Promise.all(candidates.map((d) => d.ref.update({
       matchStarted: true,
@@ -493,7 +496,6 @@ exports.autoStartMatches = functions
     })));
 
     console.log(`autoStartMatches: zagnanih ${candidates.length} tekem`);
-    return null;
   });
 
 exports.syncBadges = functions
