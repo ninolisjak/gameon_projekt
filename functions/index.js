@@ -325,6 +325,68 @@ async function buildCaptainPatch(match) {
   return patch;
 }
 
+function tallyVotes(submissions, eligible) {
+  const tally = new Map();
+  for (const [pid, s] of Object.entries(submissions)) {
+    if (!eligible.has(pid)) continue;
+    const key = `${s.scoreA}-${s.scoreB}`;
+    const cur = tally.get(key) || { scoreA: s.scoreA, scoreB: s.scoreB, count: 0, earliest: Infinity };
+    cur.count += 1;
+    const ts = s.submittedAt && s.submittedAt.toMillis ? s.submittedAt.toMillis() : 0;
+    if (ts < cur.earliest) cur.earliest = ts;
+    tally.set(key, cur);
+  }
+
+  const ranked = [...tally.values()].sort((a, b) => b.count - a.count || a.earliest - b.earliest);
+  const top = ranked[0];
+  const submittedCount = Object.keys(submissions).filter((p) => eligible.has(p)).length;
+
+  return {
+    top,
+    hasMajority: !!top && top.count > eligible.size / 2,
+    allSubmitted: submittedCount >= eligible.size,
+  };
+}
+
+function statsFromSnapshot(uid, snap) {
+  const d = snap && snap.exists ? snap.data() : null;
+  const n = (v) => (typeof v === 'number' && isFinite(v) ? v : 0);
+  return {
+    uid,
+    elo: d && d.elo !== undefined && d.elo !== null ? d.elo : STARTING_ELO,
+    reputation: d && d.reputation !== undefined && d.reputation !== null ? d.reputation : STARTING_REPUTATION,
+    wins: n(d && d.wins),
+    losses: n(d && d.losses),
+    draws: n(d && d.draws),
+    matchesPlayed: n(d && d.matchesPlayed),
+    goals: n(d && d.goals),
+    unlockedBadges: d && Array.isArray(d.unlockedBadges) ? d.unlockedBadges : [],
+  };
+}
+
+function playerOutcome(s, ctx) {
+  const { onA, oppAvg, actualA, result, hasAttended } = ctx;
+  const actual = onA ? actualA : 1 - actualA;
+
+  const dElo = hasAttended ? eloDelta(s.elo, oppAvg, actual) : 0;
+  const dRep = hasAttended ? REP_ATTENDED : REP_NO_SHOW;
+
+  return {
+    uid: s.uid,
+    team: onA ? 'A' : 'B',
+    eloBefore: s.elo,
+    dElo,
+    dRep,
+    repReason: hasAttended ? 'attended' : 'no_show',
+    isWin: hasAttended && (onA ? result === 'team_a_won' : result === 'team_b_won'),
+    isLoss: hasAttended && (onA ? result === 'team_b_won' : result === 'team_a_won'),
+    isDraw: hasAttended && result === 'draw',
+    newElo: Math.max(0, s.elo + dElo),
+    newRep: Math.max(0, Math.min(100, s.reputation + dRep)),
+    before: s,
+  };
+}
+
 async function resolveMatch(tx, matchRef, match, scoreA, scoreB, submissions) {
   const matchId = matchRef.id;
   const teamA = match.teamA || [];
@@ -338,21 +400,7 @@ async function resolveMatch(tx, matchRef, match, scoreA, scoreB, submissions) {
     ? await tx.getAll(...allPlayers.map((uid) => db.collection('users').doc(uid)))
     : [];
 
-  const stats = allPlayers.map((uid, i) => {
-    const d = snaps[i] && snaps[i].exists ? snaps[i].data() : null;
-    const n = (v) => (typeof v === 'number' && isFinite(v) ? v : 0);
-    return {
-      uid,
-      elo: d && d.elo !== undefined && d.elo !== null ? d.elo : STARTING_ELO,
-      reputation: d && d.reputation !== undefined && d.reputation !== null ? d.reputation : STARTING_REPUTATION,
-      wins: n(d && d.wins),
-      losses: n(d && d.losses),
-      draws: n(d && d.draws),
-      matchesPlayed: n(d && d.matchesPlayed),
-      goals: n(d && d.goals),
-      unlockedBadges: d && Array.isArray(d.unlockedBadges) ? d.unlockedBadges : [],
-    };
-  });
+  const stats = allPlayers.map((uid, i) => statsFromSnapshot(uid, snaps[i]));
 
   const eloMap = new Map(stats.map((s) => [s.uid, s.elo]));
   const avg = (team) => (team.length === 0
@@ -363,30 +411,13 @@ async function resolveMatch(tx, matchRef, match, scoreA, scoreB, submissions) {
   const avgB = avg(teamB);
   const actualA = result === 'team_a_won' ? 1 : result === 'draw' ? 0.5 : 0;
 
-  const perPlayer = stats.map((s) => {
-    const onA = teamA.includes(s.uid);
-    const oppAvg = onA ? avgB : avgA;
-    const actual = onA ? actualA : 1 - actualA;
-    const hasAttended = attended.includes(s.uid);
-
-    const dElo = hasAttended ? eloDelta(s.elo, oppAvg, actual) : 0;
-    const dRep = hasAttended ? REP_ATTENDED : REP_NO_SHOW;
-
-    return {
-      uid: s.uid,
-      team: onA ? 'A' : 'B',
-      eloBefore: s.elo,
-      dElo,
-      dRep,
-      repReason: hasAttended ? 'attended' : 'no_show',
-      isWin: hasAttended && (onA ? result === 'team_a_won' : result === 'team_b_won'),
-      isLoss: hasAttended && (onA ? result === 'team_b_won' : result === 'team_a_won'),
-      isDraw: hasAttended && result === 'draw',
-      newElo: Math.max(0, s.elo + dElo),
-      newRep: Math.max(0, Math.min(100, s.reputation + dRep)),
-      before: s,
-    };
-  });
+  const perPlayer = stats.map((s) => playerOutcome(s, {
+    onA: teamA.includes(s.uid),
+    oppAvg: teamA.includes(s.uid) ? avgB : avgA,
+    actualA,
+    result,
+    hasAttended: attended.includes(s.uid),
+  }));
 
   const now = Timestamp.now();
 
@@ -455,6 +486,23 @@ async function resolveMatch(tx, matchRef, match, scoreA, scoreB, submissions) {
   return result;
 }
 
+const MIN_TEAM_RATIO = 0.6;
+
+function minPlayersPerTeam(totalSpots) {
+  const perTeam = Math.floor((totalSpots || 0) / 2);
+  return Math.max(1, Math.ceil(perTeam * MIN_TEAM_RATIO));
+}
+
+function canPlayMatch(m) {
+  const min = minPlayersPerTeam(m.totalSpots);
+  const players = Array.isArray(m.players) ? m.players : [];
+  if (players.length < min * 2) return false;
+  if (!m.isPremium) return true;
+  const teamA = Array.isArray(m.teamA) ? m.teamA : [];
+  const teamB = Array.isArray(m.teamB) ? m.teamB : [];
+  return teamA.length >= min && teamB.length >= min;
+}
+
 const AUTO_START_DELAY_MS = 5 * 60 * 1000;
 
 const AUTO_START_LOOKBACK_MS = 24 * 60 * 60 * 1000;
@@ -487,15 +535,26 @@ exports.autoStartMatches = functions
       return;
     }
 
-    await Promise.all(candidates.map((d) => d.ref.update({
-      matchStarted: true,
-      startRequested: false,
-      autoStarted: true,
-      autoStartedAt: Timestamp.now(),
-      matchStartedAt: d.data().matchStartedAt || Timestamp.now(),
-    })));
+    const startable = candidates.filter((d) => canPlayMatch(d.data()));
+    const tooFew = candidates.filter((d) => !canPlayMatch(d.data()));
 
-    console.log(`autoStartMatches: zagnanih ${candidates.length} tekem`);
+    await Promise.all([
+      ...startable.map((d) => d.ref.update({
+        matchStarted: true,
+        startRequested: false,
+        autoStarted: true,
+        autoStartedAt: Timestamp.now(),
+        matchStartedAt: d.data().matchStartedAt || Timestamp.now(),
+      })),
+      ...tooFew.map((d) => d.ref.update({
+        status: 'closed',
+        cancelReason: 'low_attendance',
+        startRequested: false,
+        cancelledAt: Timestamp.now(),
+      })),
+    ]);
+
+    console.log(`autoStartMatches: zagnanih ${startable.length}, odpovedanih ${tooFew.length}`);
   });
 
 exports.syncBadges = functions
@@ -551,6 +610,12 @@ exports.submitMatchScore = functions
       if (!match.isPremium) throw new functions.https.HttpsError('failed-precondition', 'Samo Premium tekme imajo rezultat.');
       if (match.finalized) throw new functions.https.HttpsError('already-exists', 'Tekma je že zaključena.');
       if (!match.matchStarted) throw new functions.https.HttpsError('failed-precondition', 'Tekma se še ni začela.');
+      if (!canPlayMatch(match)) {
+        throw new functions.https.HttpsError(
+          'failed-precondition',
+          'Tekma nima dovolj igralcev v obeh ekipah — rezultata ni mogoče oddati.',
+        );
+      }
 
       const phase = match.scorePhase || 'none';
       const players = match.players || [];
@@ -597,22 +662,7 @@ exports.submitMatchScore = functions
       }
 
       const eligible = new Set([...players, ...captains].filter(isRealUid));
-      const tally = new Map();
-      for (const [pid, s] of Object.entries(submissions)) {
-        if (!eligible.has(pid)) continue;
-        const key = `${s.scoreA}-${s.scoreB}`;
-        const cur = tally.get(key) || { scoreA: s.scoreA, scoreB: s.scoreB, count: 0, earliest: Infinity };
-        cur.count += 1;
-        const ts = s.submittedAt && s.submittedAt.toMillis ? s.submittedAt.toMillis() : 0;
-        if (ts < cur.earliest) cur.earliest = ts;
-        tally.set(key, cur);
-      }
-
-      const ranked = [...tally.values()].sort((a, b) => b.count - a.count || a.earliest - b.earliest);
-      const top = ranked[0];
-      const submittedCount = Object.keys(submissions).filter((p) => eligible.has(p)).length;
-      const hasMajority = top && top.count > eligible.size / 2;
-      const allSubmitted = submittedCount >= eligible.size;
+      const { top, hasMajority, allSubmitted } = tallyVotes(submissions, eligible);
 
       if (top && (hasMajority || allSubmitted)) {
         const result = await resolveMatch(tx, matchRef, match, top.scoreA, top.scoreB, submissions);

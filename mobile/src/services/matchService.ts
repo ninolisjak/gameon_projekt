@@ -981,6 +981,29 @@ export function canStartMatch(match: Pick<Match, 'datetime'>, now: number = Date
   return start === null ? true : now >= start;
 }
 
+export const MIN_TEAM_RATIO = 0.6;
+
+export function minPlayersPerTeam(totalSpots: number): number {
+  const perTeam = Math.floor(totalSpots / 2);
+  return Math.max(1, Math.ceil(perTeam * MIN_TEAM_RATIO));
+}
+
+export function minPlayersToStart(totalSpots: number): number {
+  return minPlayersPerTeam(totalSpots) * 2;
+}
+
+export function hasEnoughPlayers(match: Pick<Match, 'totalSpots' | 'players'>): boolean {
+  return (match.players?.length ?? 0) >= minPlayersToStart(match.totalSpots);
+}
+
+export function teamsAreViable(
+  match: Pick<Match, 'totalSpots' | 'teamA' | 'teamB' | 'isPremium'>,
+): boolean {
+  if (!match.isPremium) return true;
+  const min = minPlayersPerTeam(match.totalSpots);
+  return (match.teamA?.length ?? 0) >= min && (match.teamB?.length ?? 0) >= min;
+}
+
 export async function requestMatchStart(matchId: string, creatorId: string): Promise<string[]> {
   const ref = doc(db, 'matches', matchId);
   return runTransaction(db, async tx => {
@@ -991,6 +1014,16 @@ export async function requestMatchStart(matchId: string, creatorId: string): Pro
     if (data.matchStarted) throw new Error('Tekma je že začeta.');
     if (data.startRequested) throw new Error('Začetek je že bil zahtevan.');
     if (!canStartMatch(data)) throw new Error('Tekme še ni mogoče začeti — počakaj na predviden termin.');
+    if (!hasEnoughPlayers(data)) {
+      throw new Error(
+        `Premalo igralcev — za začetek jih je potrebnih vsaj ${minPlayersToStart(data.totalSpots)}.`,
+      );
+    }
+    if (!teamsAreViable(data)) {
+      throw new Error(
+        `Vsaka ekipa mora imeti vsaj ${minPlayersPerTeam(data.totalSpots)} igralce.`,
+      );
+    }
 
     const players = data.players ?? [];
     const consent: Record<string, 'yes' | 'no' | 'pending'> = {};

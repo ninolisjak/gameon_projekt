@@ -33,7 +33,10 @@ jest.mock('firebase/functions', () => ({
 
 import { weatherDescription } from '../weatherService';
 import { playerStrength, userToBalanceInput, computeBalanceScore, balanceTeams, BalanceInput } from '../teamBalancer';
-import { suggestMissingPosition, STARTING_ELO, UserDoc, PlayerPosition } from '../matchService';
+import {
+  suggestMissingPosition, STARTING_ELO, UserDoc, PlayerPosition,
+  minPlayersPerTeam, minPlayersToStart, hasEnoughPlayers, teamsAreViable,
+} from '../matchService';
 
 function makePlayer(o: Partial<BalanceInput> = {}): BalanceInput {
   return { uid: 'p1', elo: 700, winRate: 0.5, matchesPlayed: 10, ...o };
@@ -240,4 +243,43 @@ describe('suggestMissingPosition — robni vhodi', () => {
     ];
     expect(suggestMissingPosition('futsal', ekipa, 5)).toBe('midfielder');
   });
+});
+
+// minimalno stevilo igralcev za zacetek tekme
+const igralci = (n: number) => Array.from({ length: n }, (_, i) => `u${i}`);
+
+describe('minPlayersPerTeam — mejne velikosti tekem', () => {
+  it('5v5 zahteva 3 na ekipo', () => expect(minPlayersPerTeam(10)).toBe(3));
+  it('4v4 zahteva 3 na ekipo', () => expect(minPlayersPerTeam(8)).toBe(3));
+  it('3v3 zahteva 2 na ekipo', () => expect(minPlayersPerTeam(6)).toBe(2));
+  it('2v2 zahteva 2 na ekipo', () => expect(minPlayersPerTeam(4)).toBe(2));
+  it('1v1 zahteva 1 na ekipo (spodnja meja)', () => expect(minPlayersPerTeam(2)).toBe(1));
+  it('nikoli ne vrne 0', () => expect(minPlayersPerTeam(0)).toBe(1));
+  it('skupni minimum je dvakratnik ekipe', () => expect(minPlayersToStart(10)).toBe(6));
+});
+
+describe('hasEnoughPlayers — prag za zacetek', () => {
+  it('5 igralcev na 5v5 ni dovolj', () =>
+    expect(hasEnoughPlayers({ totalSpots: 10, players: igralci(5) })).toBe(false));
+  it('6 igralcev na 5v5 je dovolj (natanko na meji)', () =>
+    expect(hasEnoughPlayers({ totalSpots: 10, players: igralci(6) })).toBe(true));
+  it('7 igralcev na 5v5 je dovolj', () =>
+    expect(hasEnoughPlayers({ totalSpots: 10, players: igralci(7) })).toBe(true));
+  it('en sam igralec ni dovolj', () =>
+    expect(hasEnoughPlayers({ totalSpots: 10, players: igralci(1) })).toBe(false));
+  it('manjkajoc seznam igralcev ne sesuje', () =>
+    expect(hasEnoughPlayers({ totalSpots: 10, players: undefined as any })).toBe(false));
+});
+
+describe('teamsAreViable — obe ekipi morata biti zasedeni', () => {
+  it('prazna ekipa B prepreci igro (izkoriscanje ELO)', () =>
+    expect(teamsAreViable({ totalSpots: 10, isPremium: true, teamA: igralci(1), teamB: [] })).toBe(false));
+  it('razmerje 3+2 na 5v5 ni dovolj', () =>
+    expect(teamsAreViable({ totalSpots: 10, isPremium: true, teamA: ['a', 'b', 'c'], teamB: ['d', 'e'] })).toBe(false));
+  it('razmerje 3+3 na 5v5 zadosca', () =>
+    expect(teamsAreViable({ totalSpots: 10, isPremium: true, teamA: ['a', 'b', 'c'], teamB: ['d', 'e', 'f'] })).toBe(true));
+  it('navadna tekma ekip ne preverja', () =>
+    expect(teamsAreViable({ totalSpots: 10, isPremium: false, teamA: [], teamB: [] })).toBe(true));
+  it('manjkajoci ekipi ne sesujeta', () =>
+    expect(teamsAreViable({ totalSpots: 10, isPremium: true, teamA: undefined, teamB: undefined })).toBe(false));
 });
