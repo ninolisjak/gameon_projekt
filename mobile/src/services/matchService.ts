@@ -514,63 +514,67 @@ export async function joinMatch(matchId: string, userId: string, opts?: { userIs
   return { status: 'joined' };
 }
 
+function assertCanLeave(data: Match, userId: string) {
+  if (!data.players?.includes(userId)) throw new Error('Nisi prijavljen.');
+  if (data.createdBy === userId) throw new Error('Ustvarjalec ne more zapustiti tekme.');
+  if (data.finalized) throw new Error('Tekma je že zaključena.');
+  if (data.matchStarted) throw new Error('Tekma se je že začela — odjava ni več mogoča.');
+}
+
+function teamsAfterLeave(
+  data: Match,
+  userId: string,
+  promoted?: string,
+): { teamA: string[]; teamB: string[] } {
+  const teamA = (data.teamA ?? []).filter(p => p !== userId);
+  const teamB = (data.teamB ?? []).filter(p => p !== userId);
+  if (!promoted) return { teamA, teamB };
+
+  const half = Math.floor(data.totalSpots / 2);
+  if (teamA.length <= teamB.length && teamA.length < half) {
+    teamA.push(promoted);
+  } else {
+    teamB.push(promoted);
+  }
+  return { teamA, teamB };
+}
+
+function matchMsUntil(data: Match): number {
+  const matchDate = data.datetime?.toDate ? data.datetime.toDate() : new Date(data.datetime);
+  return isNaN(matchDate.getTime()) ? Infinity : matchDate.getTime() - Date.now();
+}
+
 export async function leaveMatch(matchId: string, userId: string) {
   const ref = doc(db, 'matches', matchId);
   const ctx = await runTransaction(db, async tx => {
     const snap = await tx.get(ref);
     if (!snap.exists()) throw new Error('Tekma ne obstaja.');
     const data = snap.data() as Match;
-    if (!data.players?.includes(userId)) throw new Error('Nisi prijavljen.');
-    if (data.createdBy === userId) throw new Error('Ustvarjalec ne more zapustiti tekme.');
-    if (data.finalized) throw new Error('Tekma je že zaključena.');
-    if (data.matchStarted) throw new Error('Tekma se je že začela — odjava ni več mogoča.');
+    assertCanLeave(data, userId);
 
-    let updatedPlayers = (data.players ?? []).filter(p => p !== userId);
-    let updatedWaitlist = (data.waitlist ?? []).filter(
+    const updatedPlayers = (data.players ?? []).filter(p => p !== userId);
+    const updatedWaitlist = (data.waitlist ?? []).filter(
       p => p !== userId && !updatedPlayers.includes(p),
     );
-    let newFilled = updatedPlayers.length;
 
-    const update: any = {};
+    const promoted = updatedWaitlist.shift();
+    if (promoted) updatedPlayers.push(promoted);
 
-    if (updatedWaitlist.length > 0) {
-      const nextPlayer = updatedWaitlist.shift();
-      updatedPlayers.push(nextPlayer!);
-      newFilled += 1;
-      update.waitlist = updatedWaitlist;
+    const update: any = { waitlist: updatedWaitlist };
 
-      if (data.isPremium) {
-        let teamA = (data.teamA ?? []).filter(p => p !== userId);
-        let teamB = (data.teamB ?? []).filter(p => p !== userId);
-        const half = Math.floor(data.totalSpots / 2);
-        if (teamA.length <= teamB.length && teamA.length < half) {
-          teamA.push(nextPlayer!);
-        } else {
-          teamB.push(nextPlayer!);
-        }
-        update.teamA = teamA;
-        update.teamB = teamB;
-      }
-    } else {
-      update.waitlist = updatedWaitlist;
-      if (data.isPremium) {
-        update.teamA = (data.teamA ?? []).filter(p => p !== userId);
-        update.teamB = (data.teamB ?? []).filter(p => p !== userId);
-      }
-      if (data.teamsBalanced && data.isPremium) {
-        update.teamsBalanced = false;
-      }
+    if (data.isPremium) {
+      const { teamA, teamB } = teamsAfterLeave(data, userId, promoted);
+      update.teamA = teamA;
+      update.teamB = teamB;
+      if (!promoted && data.teamsBalanced) update.teamsBalanced = false;
     }
 
     update.players = updatedPlayers;
-    update.filledSpots = newFilled;
-    update.status = newFilled >= data.totalSpots ? 'full' : 'open';
+    update.filledSpots = updatedPlayers.length;
+    update.status = updatedPlayers.length >= data.totalSpots ? 'full' : 'open';
 
     tx.update(ref, update);
-
-    const matchDate = data.datetime?.toDate ? data.datetime.toDate() : new Date(data.datetime);
-    const msUntil = isNaN(matchDate.getTime()) ? Infinity : matchDate.getTime() - Date.now();
-    return { msUntil };
+    return { msUntil: matchMsUntil(data) };
   });
 
   if (ctx.msUntil < LATE_CANCEL_WINDOW_MS && ctx.msUntil > -LATE_CANCEL_WINDOW_MS) {
@@ -589,6 +593,20 @@ export async function leaveWaitlist(matchId: string, userId: string) {
     if (!data.waitlist?.includes(userId)) throw new Error('Nisi na čakalni vrsti.');
     tx.update(ref, { waitlist: arrayRemove(userId) });
   });
+}
+
+export function quorumStatus(
+  members: string[],
+  rsvps: Record<string, RSVP>,
+  minQuorum: number,
+): 'pending' | 'confirmed' | 'cancelled' {
+  const answers = members.map(m => rsvps[m]);
+  const coming = answers.filter(r => r === 'coming').length;
+  const notComing = answers.filter(r => r === 'not_coming').length;
+
+  if (coming >= minQuorum) return 'confirmed';
+  if (notComing > members.length - minQuorum) return 'cancelled';
+  return 'pending';
 }
 
 export async function rsvpSlot(slotId: string, userId: string, rsvp: RSVP) {
@@ -610,23 +628,8 @@ export async function rsvpSlot(slotId: string, userId: string, rsvp: RSVP) {
     }
 
     const updatedRsvps = { ...slotData.rsvps, [userId]: rsvp };
-
-    const members = groupData.members;
-    const memberRsvps = members.map(m => updatedRsvps[m]);
-    const coming = memberRsvps.filter(r => r === 'coming').length;
-    const notComing = memberRsvps.filter(r => r === 'not_coming').length;
-    const total = members.length;
-
-    let newStatus: 'pending' | 'confirmed' | 'cancelled' = 'pending';
-    let triggerNext = false;
-
-    if (coming >= groupData.minQuorum) {
-      newStatus = 'confirmed';
-      triggerNext = true;
-    } else if (notComing > total - groupData.minQuorum) {
-      newStatus = 'cancelled';
-      triggerNext = true;
-    }
+    const newStatus = quorumStatus(groupData.members, updatedRsvps, groupData.minQuorum);
+    const triggerNext = newStatus !== 'pending';
 
     tx.update(slotRef, {
       rsvps: updatedRsvps,
