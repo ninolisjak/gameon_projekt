@@ -293,12 +293,16 @@ export default function MatchDetailsScreen() {
   const emptySlots = Math.max(0, match.totalSpots - (match.players?.length ?? match.filledSpots));
   const waitlistCount = waitlist.length;
   const pendingInvite = match.pendingInvites?.[userId] ?? null;
+  const ctaHidden = !!match.matchStarted && !match.finalized;
 
   return (
     <View style={styles.container}>
       <StatusBar barStyle="light-content" backgroundColor={colors.primary} />
 
-      <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
+      <ScrollView
+        contentContainerStyle={[styles.scroll, ctaHidden && { paddingBottom: 32 }]}
+        showsVerticalScrollIndicator={false}
+      >
         <SafeAreaView edges={['top']} style={styles.hero}>
           <View style={styles.heroTopRow}>
             <TouchableOpacity style={styles.backBtn} onPress={() => navigation.goBack()}>
@@ -594,18 +598,14 @@ export default function MatchDetailsScreen() {
         </View>
       </ScrollView>
 
+      {!ctaHidden && (
       <View style={styles.ctaBar}>
         {match.finalized ? (
           <View style={styles.fullBtn}>
             <Text style={styles.fullBtnText}>Tekma končana</Text>
           </View>
         ) : isCreator ? (
-          match.matchStarted ? (
-            <View style={[styles.fullBtn, { flexDirection: 'row', gap: 8, borderColor: '#22c55e40', backgroundColor: '#22c55e10' }]}>
-              <Ionicons name="play-circle" size={20} color="#22c55e" />
-              <Text style={[styles.fullBtnText, { color: '#22c55e' }]}>Tekma je v teku</Text>
-            </View>
-          ) : match.startRequested ? (
+          match.startRequested ? (
             match.startConsent?.[userId] === 'pending' ? (
               <View style={[styles.fullBtn, { flexDirection: 'row', gap: 8, borderColor: colors.primaryTint }]}>
                 <Ionicons name="arrow-up" size={18} color={colors.primaryLight} />
@@ -677,6 +677,7 @@ export default function MatchDetailsScreen() {
           </TouchableOpacity>
         )}
       </View>
+      )}
     </View>
   );
 }

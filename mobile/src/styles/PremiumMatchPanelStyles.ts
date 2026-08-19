@@ -122,20 +122,24 @@ export const makeStyles = (colors: Colors) => StyleSheet.create({
   },
   inviteEmpty: { color: colors.textMuted, fontSize: 13, fontStyle: 'italic', textAlign: 'center', paddingVertical: 8 },
   invitePlayerRow: {
-    flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 7,
-    borderTopWidth: 1, borderTopColor: colors.borderSubtle,
+    flexDirection: 'row', alignItems: 'center', gap: 12,
+    paddingVertical: 10, paddingHorizontal: 10,
+    borderRadius: 12, marginTop: 6,
+    backgroundColor: colors.bg,
+    borderWidth: 1, borderColor: 'transparent',
   },
   invitePlayerAvatar: {
-    width: 30, height: 30, borderRadius: 15,
+    width: 34, height: 34, borderRadius: 17,
     backgroundColor: colors.primaryTint, alignItems: 'center', justifyContent: 'center',
   },
-  invitePlayerName: { color: colors.text, fontSize: 13, fontWeight: '600' },
-  invitePlayerStats: { color: colors.textMuted, fontSize: 11, marginTop: 1 },
+  invitePlayerName: { color: colors.text, fontSize: 13, fontWeight: '700', flexShrink: 1 },
+  invitePlayerStats: { color: colors.textMuted, fontSize: 11, marginTop: 2 },
   inviteBtn: {
-    backgroundColor: colors.primary, borderRadius: 8,
-    paddingHorizontal: 12, paddingVertical: 6, minWidth: 66, alignItems: 'center',
+    backgroundColor: colors.primary, borderRadius: 10,
+    paddingHorizontal: 14, height: 34, minWidth: 78,
+    alignItems: 'center', justifyContent: 'center',
   },
-  inviteBtnText: { color: '#fff', fontSize: 11, fontWeight: '800', letterSpacing: 0.3 },
+  inviteBtnText: { color: '#fff', fontSize: 11, fontWeight: '800', letterSpacing: 0.5 },
 
   resultCard: {
     backgroundColor: colors.bgElevated, borderRadius: 18, padding: 22,

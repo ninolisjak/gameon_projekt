@@ -13,6 +13,7 @@ import {
   subscribeChatMessages, sendTextMessage,
   sendGifMessage, sendImageMessage, ChatMessage,
 } from '../services/chatService';
+import { resolveUserNames } from '../services/matchService';
 import GiphyPickerModal from './GiphyPickerModal';
 import { useColors } from '../context/PremiumContext';
 
@@ -28,18 +29,46 @@ export default function MatchChatScreen() {
   const { matchId, matchName } = route.params as { matchId: string; matchName: string };
   const colors = useColors();
   const userId = auth.currentUser?.uid ?? '';
-  const userName = auth.currentUser?.displayName ?? 'Uporabnik';
 
   const [messages, setMessages] = React.useState<ChatMessage[]>([]);
   const [text, setText] = React.useState('');
   const [sending, setSending] = React.useState(false);
   const [uploadingImage, setUploadingImage] = React.useState(false);
   const [showGiphy, setShowGiphy] = React.useState(false);
+  const [senderNames, setSenderNames] = React.useState<Map<string, string>>(new Map());
   const listRef = React.useRef<FlatList>(null);
+
+  const userName = React.useMemo(() => {
+    const resolved = senderNames.get(userId);
+    if (resolved) return resolved;
+    const u = auth.currentUser;
+    return u?.displayName || (u?.email ? u.email.split('@')[0] : 'Uporabnik');
+  }, [senderNames, userId]);
 
   React.useEffect(() => {
     return subscribeChatMessages(matchId, setMessages);
   }, [matchId]);
+
+  React.useEffect(() => {
+    const uids = [...new Set(messages.map(m => m.senderId).filter(Boolean))];
+    if (userId && !uids.includes(userId)) uids.push(userId);
+    const missing = uids.filter(u => !senderNames.has(u));
+    if (missing.length === 0) return;
+    resolveUserNames(missing).then(resolved => {
+      setSenderNames(prev => {
+        const next = new Map(prev);
+        resolved.forEach((name, uid) => next.set(uid, name));
+        return next;
+      });
+    }).catch(() => {});
+  }, [messages, userId]);
+
+  function displayName(msg: ChatMessage): string {
+    const resolved = senderNames.get(msg.senderId);
+    if (resolved) return resolved;
+    if (msg.senderName && msg.senderName !== 'Uporabnik') return msg.senderName;
+    return msg.senderId ? msg.senderId.slice(0, 8) : 'Uporabnik';
+  }
 
   React.useEffect(() => {
     if (messages.length > 0) {
@@ -105,7 +134,7 @@ export default function MatchChatScreen() {
       }}>
         {showName && (
           <Text style={{ color: colors.textFaint, fontSize: 11, marginBottom: 3, marginLeft: 4 }}>
-            {item.senderName}
+            {displayName(item)}
           </Text>
         )}
         <View style={{

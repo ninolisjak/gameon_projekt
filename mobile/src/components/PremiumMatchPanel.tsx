@@ -402,7 +402,7 @@ export default function PremiumMatchPanel({ match, userId, userNames }: Props) {
                 return (
                   <View key={u.uid} style={[
                     styles.invitePlayerRow,
-                    matchesPos && { borderWidth: 1, borderColor: colors.primary + '60', backgroundColor: colors.primary + '08' },
+                    matchesPos && { borderColor: colors.primary + '60', backgroundColor: colors.primary + '12' },
                   ]}>
                     <View style={styles.invitePlayerAvatar}>
                       <Ionicons name="person" size={14} color={colors.primaryLight} />
@@ -411,8 +411,8 @@ export default function PremiumMatchPanel({ match, userId, userNames }: Props) {
                       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
                         <Text style={styles.invitePlayerName} numberOfLines={1}>{name}</Text>
                         {matchesPos && (
-                          <View style={{ paddingHorizontal: 5, paddingVertical: 1, borderRadius: 4, backgroundColor: colors.primary }}>
-                            <Text style={{ color: '#fff', fontSize: 9, fontWeight: '900' }}>USTREZNA POZ</Text>
+                          <View style={{ paddingHorizontal: 7, paddingVertical: 3, borderRadius: 6, backgroundColor: colors.primary }}>
+                            <Text style={{ color: '#fff', fontSize: 9, fontWeight: '900', letterSpacing: 0.3 }}>USTREZNA POZ</Text>
                           </View>
                         )}
                       </View>
