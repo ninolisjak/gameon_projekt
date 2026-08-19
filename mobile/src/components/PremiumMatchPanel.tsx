@@ -288,7 +288,7 @@ export default function PremiumMatchPanel({ match, userId, userNames }: Props) {
               </TouchableOpacity>
             )}
           </View>
-          {players.map(renderPlayer)}
+          {players.map((uid, idx) => renderPlayer(uid, idx))}
           {pendingForTeam.map(([uid]) => (
             <View key={`pending-${uid}`} style={[styles.teamPlayer, { opacity: 0.6 }]}>
               <View style={[styles.teamPlayerAvatar, { backgroundColor: '#f59e0b18' }]}>
